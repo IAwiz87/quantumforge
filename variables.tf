@@ -4,6 +4,7 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+
 variable "environment" {
   description = "Environment name used in tags and naming (e.g. sandbox, staging, prod)."
   type        = string
