@@ -9,6 +9,7 @@
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
+
 locals {
   key_admin_statement = length(var.key_administrators) > 0 ? [{
     Sid    = "AllowKeyAdministration"
