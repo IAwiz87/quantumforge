@@ -8,6 +8,7 @@ made and verified.
 
 By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
+
 ## Ways to Contribute
 
 - **Bug reports** — something in a module, policy, or workflow behaves incorrectly
