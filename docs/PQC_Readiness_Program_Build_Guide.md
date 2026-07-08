@@ -17,6 +17,7 @@ Three regulatory clocks are running simultaneously for any enterprise handling s
 
 This program operationalizes the transition using a policy-as-code and continuous-evidence toolchain: Rego/OPA for machine-readable control logic, Terraform+Conftest for pre-deployment infrastructure gating, and GitHub Actions (or equivalent CI) for tamper-evident, always-on compliance evidence. The four phases below take that toolchain from an empty repository to a fully operating PQC governance capability.
 
+
 ---
 
 ## Part 1 — Prerequisite Software & Environment Setup
