@@ -172,4 +172,10 @@ Everything in this repo was validated before commit:
 
 ---
 
+## Companion documentation
+
+- [PQC Readiness Program Build Guide](docs/PQC_Readiness_Program_Build_Guide.md) — the full four-phase program design (Discovery & Inventory, Vulnerability Prioritization, Cryptographic Agility Architecture, Continuous Compliance) that this repo implements in Terraform, Rego, and CI.
+
+---
+
 *Part of the QuantumForge PQC GRC Framework. This is the implementation repo for the companion PQC Readiness Program Build Guide document.*
