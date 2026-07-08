@@ -1,5 +1,3 @@
-# QuantumForge
-
 ![QuantumForge banner](docs/banner.png)
 
 
