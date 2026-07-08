@@ -1,6 +1,8 @@
-# QuantumForge — PQC GRC Framework
+# QuantumForge
 
-A working, policy-as-code post-quantum cryptography readiness program: Terraform modules for hybrid-PQC AWS infrastructure, Rego/OPA policies for crypto discovery, risk scoring, and compliance gating, and GitHub Actions pipelines that turn all of it into continuously generated audit evidence.
+![QuantumForge banner](docs/banner.png)
+
+**QuantumForge** is a working, policy-as-code post-quantum cryptography readiness program (the QuantumForge PQC GRC Framework): Terraform modules for hybrid-PQC AWS infrastructure, Rego/OPA policies for crypto discovery, risk scoring, and compliance gating, and GitHub Actions pipelines that turn all of it into continuously generated audit evidence.
 
 This repo implements the four-phase QuantumForge program end to end:
 

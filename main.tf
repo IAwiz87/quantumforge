@@ -1,4 +1,4 @@
-# QuantumForge — PQC GRC Framework
+# QuantumForge
 # Root module wiring the hybrid-PQC reference modules together.
 #
 # This root module is intentionally conditional (enable_* flags) so it can
