@@ -20,6 +20,7 @@ variable "key_spec" {
   }
 }
 
+
 variable "deletion_window_in_days" {
   description = "Waiting period before key deletion is finalized."
   type        = number
