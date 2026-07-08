@@ -9,6 +9,7 @@
 
 ## Program Rationale
 
+
 Three regulatory clocks are running simultaneously for any enterprise handling sensitive or regulated data:
 
 - **CNSA 2.0** (NSA Commercial National Security Algorithm Suite 2.0): no enforcement before December 31, 2025; all new National Security System acquisitions must be CNSA 2.0-compliant by January 1, 2027; non-supporting fielded equipment phased out by December 31, 2030; full cryptographic enforcement across NSS by December 31, 2031; full quantum-resistance across NSS by 2035 per NSM-10 ([SafeLogic](https://www.safelogic.com/compliance/cnsa-2)). A 2026 federal PQC executive order accelerates the civilian-agency timeline further, requiring high-value-asset and high-impact systems to migrate key establishment by December 31, 2030 and digital signatures by December 31, 2031 ([Center for Cybersecurity Policy](https://www.centerforcybersecuritypolicy.org/insights-and-research/from-strategy-to-implementation-the-white-house-accelerates-the-federal-transition-to-post-quantum-cryptography)).
