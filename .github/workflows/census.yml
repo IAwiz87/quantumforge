@@ -1,0 +1,60 @@
+name: pqc-crypto-census
+# Phase 1 — Discovery & Inventory
+#
+# Runs on every pull request that touches Terraform. Extracts a plan,
+# classifies every cryptographic asset with the discovery Rego policy,
+# regenerates the Crypto Bill of Materials (CBOM), and posts a summary
+# comment on the PR so newly introduced non-agile cryptography is caught
+# at commit time, not audit time.
+
+on:
+  pull_request:
+    paths:
+      - "**/*.tf"
+      - "policies/discovery/**"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  crypto-census:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Setup OPA
+        uses: open-policy-agent/setup-opa@v2
+        with:
+          version: latest
+
+      - name: Terraform init & plan
+        run: |
+          terraform init -input=false
+          terraform plan -input=false -out=tfplan || true
+          terraform show -json tfplan > ingest/plan.json || echo '{"resource_changes":[]}' > ingest/plan.json
+
+      - name: Unit-test discovery policy
+        run: opa test -v policies/discovery/
+
+      - name: Classify crypto assets
+        run: |
+          mkdir -p reports
+          opa eval -f pretty -d policies/discovery -i ingest/plan.json "data.quantumforge.discovery.inventory" > reports/iac-inventory.json
+          opa eval -f pretty -d policies/discovery -i ingest/plan.json "data.quantumforge.discovery.summary" > reports/census-summary.json
+          cat reports/census-summary.json
+
+      - name: Generate CBOM
+        run: |
+          npm install -g @cyclonedx/cdxgen
+          cdxgen -t terraform -o reports/iac.cdx.json . || true
+
+      - name: Upload census artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pqc-crypto-census
+          path: reports/

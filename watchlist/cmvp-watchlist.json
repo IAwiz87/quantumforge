@@ -1,0 +1,20 @@
+{
+  "description": "Cryptographic libraries this program's infrastructure depends on, tracked against the NIST CMVP Modules in Process list. Update as the client's dependency footprint changes.",
+  "watched_modules": [
+    {
+      "name": "AWS-LC",
+      "vendor": "Amazon Web Services",
+      "target_algorithms": ["ML-KEM", "ML-DSA"],
+      "notes": "First open-source cryptographic module with ML-KEM in an active FIPS 140-3 validation as of program compilation.",
+      "reference": "https://github.com/aws/aws-lc"
+    },
+    {
+      "name": "liboqs / oqs-provider",
+      "vendor": "Open Quantum Safe project",
+      "target_algorithms": ["ML-KEM", "ML-DSA", "SLH-DSA"],
+      "notes": "Prototyping library, not itself seeking CMVP validation — tracked for upstream algorithm-implementation changes.",
+      "reference": "https://github.com/open-quantum-safe/liboqs"
+    }
+  ],
+  "last_reviewed": "2026-07-08"
+}

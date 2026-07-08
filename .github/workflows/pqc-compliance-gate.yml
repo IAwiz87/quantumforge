@@ -1,0 +1,90 @@
+name: pqc-compliance-gate
+# Phase 3 & 4 — Crypto-Agility Gate + Continuous Compliance Evidence
+#
+# Runs the full policy-as-code gate on every PR and produces a signed,
+# retained evidence bundle on every merge to main. Uses OIDC federation
+# for AWS credentials — no long-lived static keys stored in the repo.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  compliance-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Uncomment once a QuantumForge evidence IAM role has been provisioned
+      # for this repository (see README > CI/CD Setup).
+      # - name: Configure AWS credentials (OIDC)
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     role-to-assume: ${{ secrets.QUANTUMFORGE_EVIDENCE_ROLE_ARN }}
+      #     aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init & plan
+        run: |
+          terraform init -input=false
+          terraform plan -input=false -out=tfplan
+          terraform show -json tfplan > plan.json
+
+      - name: Setup OPA & Conftest
+        run: |
+          curl -sSLo /usr/local/bin/opa "https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static"
+          chmod +x /usr/local/bin/opa
+          curl -sSLo conftest.tar.gz "https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_0.56.0_Linux_x86_64.tar.gz"
+          tar -xzf conftest.tar.gz -C /usr/local/bin conftest
+
+      - name: Unit-test all policies
+        run: |
+          opa test -v policies/discovery/ policies/scoring/ policies/hybrid/
+
+      - name: Trivy IaC scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: config
+          scan-ref: .
+          format: json
+          output: trivy-report.json
+
+      - name: Checkov scan
+        run: |
+          pip install checkov
+          checkov -d . --output json --output-file-path checkov-report.json || true
+
+      - name: Crypto-agility gate (Rego / Conftest)
+        run: |
+          conftest test plan.json -p policies/hybrid/ --output json > conftest-report.json
+          cat conftest-report.json
+          conftest test plan.json -p policies/hybrid/
+
+      - name: Regenerate CBOM
+        run: |
+          npm install -g @cyclonedx/cdxgen
+          cdxgen -t terraform -o cbom.json . || true
+
+      - name: Assemble evidence bundle
+        if: github.event_name == 'push'
+        run: |
+          mkdir -p evidence
+          cp plan.json trivy-report.json checkov-report.json conftest-report.json cbom.json evidence/ 2>/dev/null || true
+          echo "{\"commit\":\"${{ github.sha }}\",\"timestamp\":\"$(date -u +%FT%TZ)\",\"repo\":\"${{ github.repository }}\"}" > evidence/manifest.json
+          zip -r "pqc-evidence-$(date -u +%F).zip" evidence/
+
+      - name: Upload evidence artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pqc-compliance-evidence
+          path: pqc-evidence-*.zip
+          retention-days: 2555

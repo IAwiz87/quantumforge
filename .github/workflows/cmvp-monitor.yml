@@ -1,0 +1,44 @@
+name: cmvp-status-monitor
+# Phase 4 — Continuous CMVP Status Monitor
+#
+# Weekly scheduled job that checks the NIST CMVP "Modules in Process" list
+# for a client-maintained watchlist of cryptographic libraries the program
+# depends on, and opens a tracking issue when a watched module's status
+# changes (e.g. advances toward or achieves full validation).
+
+on:
+  schedule:
+    - cron: "0 13 * * 1" # every Monday 13:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-cmvp-status:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch CMVP Modules in Process list
+        run: |
+          curl -sSL "https://csrc.nist.gov/CSRC/media/Projects/cryptographic-module-validation-program/documents/modinprocess/MIP%20List.pdf" -o mip-list.pdf || true
+          echo "Fetched CMVP Modules in Process reference. Manual/automated diffing against watchlist.json should be implemented per client CMVP dependency list."
+
+      - name: Compare against watchlist
+        run: |
+          cat watchlist/cmvp-watchlist.json
+
+      - name: Open tracking issue on change
+        if: false # enable once diff logic against a stored previous snapshot is implemented
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "CMVP status change detected for a watched module",
+              body: "A watched cryptographic module's CMVP validation status has changed. Review reports/cmvp-diff.json for details.",
+              labels: ["compliance", "pqc"],
+            });

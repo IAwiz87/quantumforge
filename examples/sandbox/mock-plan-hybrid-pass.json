@@ -1,0 +1,14 @@
+{
+  "resource_changes": [
+    {
+      "address": "module.hybrid_pqc_kms.aws_kms_key.pqc_signing",
+      "type": "aws_kms_key",
+      "change": {"after": {"key_usage": "SIGN_VERIFY", "customer_master_key_spec": "ML_DSA_65"}}
+    },
+    {
+      "address": "module.hybrid_pqc_alb.aws_lb_listener.hybrid_pqc_https",
+      "type": "aws_lb_listener",
+      "change": {"after": {"protocol": "HTTPS", "ssl_policy": "ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09"}}
+    }
+  ]
+}
