@@ -6,6 +6,7 @@ Terraform modules, OPA/Rego policies, and CI pipelines all need to stay
 correct and testable, so this guide covers how changes are expected to be
 made and verified.
 
+
 By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 
