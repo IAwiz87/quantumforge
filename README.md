@@ -175,6 +175,10 @@ Everything in this repo was validated before commit:
 
 - [PQC Readiness Program Build Guide](docs/PQC_Readiness_Program_Build_Guide.md) — the full four-phase program design (Discovery & Inventory, Vulnerability Prioritization, Cryptographic Agility Architecture, Continuous Compliance) that this repo implements in Terraform, Rego, and CI.
 
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for planned work — currently focused on making the risk-scoring model impact-driven and expanding module coverage beyond AWS to Azure, GCP, on-prem, and other environments.
+
 ## Contributing
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing requirements, and the PR process. Please review [SECURITY.md](SECURITY.md) before reporting any vulnerabilities, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards.
