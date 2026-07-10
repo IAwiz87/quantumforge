@@ -11,6 +11,7 @@ Have an idea, or want to claim an item below? Open an issue or see
 
 ---
 
+
 ## Priority 1 — Impact-Driven Risk Scoring
 
 **Where we are today:** `policies/scoring/risk_score.rego` combines three
