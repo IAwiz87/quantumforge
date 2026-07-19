@@ -1,0 +1,180 @@
+name: aws-live-pqc-validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_alb_pqtls:
+        description: "Also run the paid, short-lived ALB hybrid PQ-TLS negotiation test"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quantumforge-live-aws
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  AWS_EC2_METADATA_DISABLED: "true"
+  AWS_REGION: us-east-1
+
+jobs:
+  kms-lifecycle:
+    name: ML-DSA KMS lifecycle
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: quantumforge-aws-sandbox
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Require sandbox configuration
+        env:
+          ROLE_ARN: ${{ vars.QUANTUMFORGE_AWS_ROLE_ARN }}
+          ACCOUNT_ID: ${{ vars.QUANTUMFORGE_AWS_ACCOUNT_ID }}
+        run: |
+          test -n "$ROLE_ARN"
+          test -n "$ACCOUNT_ID"
+
+      - name: Authenticate to isolated AWS sandbox
+        uses: aws-actions/configure-aws-credentials@3d122535fae0e48eebf53a3bcee95529f1deaf1f # v5.1.1
+        with:
+          role-to-assume: ${{ vars.QUANTUMFORGE_AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: quantumforge-kms-${{ github.run_id }}
+
+      - name: Run KMS lifecycle test
+        env:
+          QUANTUMFORGE_ALLOW_LIVE_AWS_TESTS: "1"
+          QUANTUMFORGE_EXPECTED_ACCOUNT_ID: ${{ vars.QUANTUMFORGE_AWS_ACCOUNT_ID }}
+          QUANTUMFORGE_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+        run: ./scripts/aws/kms-lifecycle-test.sh build/live-kms
+
+      - name: Build complete evidence bundle
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.QUANTUMFORGE_AWS_ACCOUNT_ID }}
+        run: ./scripts/build-evidence.py build/live-kms build/quantumforge-kms-${{ github.run_id }}.zip kms
+
+      - name: Attest KMS evidence bundle
+        id: attest
+        uses: actions/attest-build-provenance@6f4598ea9f7c8e033b76ef2e31b1d5892424044d # v4.1.0
+        with:
+          subject-path: build/quantumforge-kms-${{ github.run_id }}.zip
+
+      - name: Publish to immutable evidence bucket
+        if: ${{ vars.QUANTUMFORGE_EVIDENCE_BUCKET != '' }}
+        run: ./scripts/publish-evidence-s3.sh build/quantumforge-kms-${{ github.run_id }}.zip "${{ vars.QUANTUMFORGE_EVIDENCE_BUCKET }}"
+
+      - name: Upload short-term workflow copy
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quantumforge-kms-evidence-${{ github.run_id }}
+          path: |
+            build/quantumforge-kms-${{ github.run_id }}.zip
+            build/quantumforge-kms-${{ github.run_id }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quantumforge-kms-failure-${{ github.run_id }}
+          path: build/live-kms
+          if-no-files-found: warn
+          retention-days: 7
+
+  alb-pqtls-runtime:
+    name: ALB hybrid PQ-TLS runtime
+    if: ${{ github.ref == 'refs/heads/main' && inputs.run_alb_pqtls }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: quantumforge-aws-sandbox
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Require sandbox configuration
+        env:
+          ROLE_ARN: ${{ vars.QUANTUMFORGE_AWS_ROLE_ARN }}
+          ACCOUNT_ID: ${{ vars.QUANTUMFORGE_AWS_ACCOUNT_ID }}
+        run: |
+          test -n "$ROLE_ARN"
+          test -n "$ACCOUNT_ID"
+
+      - name: Authenticate to isolated AWS sandbox
+        uses: aws-actions/configure-aws-credentials@3d122535fae0e48eebf53a3bcee95529f1deaf1f # v5.1.1
+        with:
+          role-to-assume: ${{ vars.QUANTUMFORGE_AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: quantumforge-alb-${{ github.run_id }}
+
+      - name: Run ALB PQ-TLS runtime test
+        env:
+          QUANTUMFORGE_ALLOW_LIVE_AWS_TESTS: "1"
+          QUANTUMFORGE_EXPECTED_ACCOUNT_ID: ${{ vars.QUANTUMFORGE_AWS_ACCOUNT_ID }}
+          QUANTUMFORGE_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+        run: ./scripts/aws/alb-pqtls-lifecycle-test.sh build/live-alb
+
+      - name: Build complete evidence bundle
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.QUANTUMFORGE_AWS_ACCOUNT_ID }}
+        run: ./scripts/build-evidence.py build/live-alb build/quantumforge-alb-${{ github.run_id }}.zip alb
+
+      - name: Attest ALB evidence bundle
+        uses: actions/attest-build-provenance@6f4598ea9f7c8e033b76ef2e31b1d5892424044d # v4.1.0
+        with:
+          subject-path: build/quantumforge-alb-${{ github.run_id }}.zip
+
+      - name: Publish to immutable evidence bucket
+        if: ${{ vars.QUANTUMFORGE_EVIDENCE_BUCKET != '' }}
+        run: ./scripts/publish-evidence-s3.sh build/quantumforge-alb-${{ github.run_id }}.zip "${{ vars.QUANTUMFORGE_EVIDENCE_BUCKET }}"
+
+      - name: Upload short-term workflow copy
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quantumforge-alb-evidence-${{ github.run_id }}
+          path: |
+            build/quantumforge-alb-${{ github.run_id }}.zip
+            build/quantumforge-alb-${{ github.run_id }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quantumforge-alb-failure-${{ github.run_id }}
+          path: build/live-alb
+          if-no-files-found: warn
+          retention-days: 7
