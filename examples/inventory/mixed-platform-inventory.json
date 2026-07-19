@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0.0",
+  "assets": [
+    {
+      "asset_id": "arn:aws:kms:us-east-1:123456789012:key/example",
+      "provider": "aws",
+      "resource_type": "aws_kms_key",
+      "crypto_function": "signing",
+      "algorithm": "ML_DSA_65",
+      "classification": "post_quantum",
+      "owner": "release-engineering",
+      "environment": "production",
+      "location": "us-east-1",
+      "source": "cloud_api",
+      "observed_at": "2026-07-19T12:00:00Z",
+      "evidence_confidence": "high"
+    },
+    {
+      "asset_id": "/subscriptions/example/resourceGroups/security/providers/Microsoft.KeyVault/vaults/example",
+      "provider": "azure",
+      "resource_type": "azure_key_vault",
+      "crypto_function": "key_management",
+      "algorithm": "provider_managed",
+      "classification": "unknown",
+      "owner": "identity-platform",
+      "environment": "production",
+      "location": "eastus",
+      "source": "manual_attestation",
+      "observed_at": "2026-07-19T12:00:00Z",
+      "evidence_confidence": "low"
+    },
+    {
+      "asset_id": "projects/example/locations/us/keyRings/app/cryptoKeys/signing",
+      "provider": "gcp",
+      "resource_type": "gcp_cloud_kms_key",
+      "crypto_function": "signing",
+      "algorithm": "EC_SIGN_P256_SHA256",
+      "classification": "classical_only",
+      "owner": "application-security",
+      "environment": "staging",
+      "location": "us",
+      "source": "cloud_api",
+      "observed_at": "2026-07-19T12:00:00Z",
+      "evidence_confidence": "high"
+    },
+    {
+      "asset_id": "application:billing-api:openssl",
+      "provider": "application",
+      "resource_type": "cryptographic_library",
+      "crypto_function": "library",
+      "algorithm": "OpenSSL 3.5 provider set",
+      "classification": "unknown",
+      "owner": "billing-platform",
+      "environment": "production",
+      "source": "cbom",
+      "observed_at": "2026-07-19T12:00:00Z",
+      "evidence_confidence": "medium"
+    },
+    {
+      "asset_id": "on-prem:vpn:datacenter-east",
+      "provider": "on_prem",
+      "resource_type": "ipsec_gateway",
+      "crypto_function": "network_encryption",
+      "algorithm": "AES-256-GCM/ECDH-P384",
+      "protocol": "IKEv2/IPsec",
+      "classification": "classical_only",
+      "owner": "network-security",
+      "environment": "production",
+      "location": "datacenter-east",
+      "data_flow": "AWS to datacenter-east",
+      "source": "manual_attestation",
+      "observed_at": "2026-07-19T12:00:00Z",
+      "evidence_confidence": "medium"
+    }
+  ]
+}

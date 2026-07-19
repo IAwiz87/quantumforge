@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quantumforge.dev/schemas/crypto-inventory.schema.json",
+  "title": "QuantumForge Vendor-Neutral Cryptographic Inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "assets"],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/crypto_asset"
+      }
+    }
+  },
+  "$defs": {
+    "crypto_asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "asset_id",
+        "provider",
+        "resource_type",
+        "crypto_function",
+        "algorithm",
+        "classification",
+        "owner",
+        "environment",
+        "source",
+        "observed_at",
+        "evidence_confidence"
+      ],
+      "properties": {
+        "asset_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "enum": ["aws", "azure", "gcp", "on_prem", "saas", "application"]
+        },
+        "resource_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "crypto_function": {
+          "enum": [
+            "key_management",
+            "signing",
+            "encryption_at_rest",
+            "tls_termination",
+            "network_encryption",
+            "certificate",
+            "certificate_authority",
+            "library",
+            "protocol",
+            "other"
+          ]
+        },
+        "algorithm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "protocol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "classification": {
+          "enum": ["post_quantum", "hybrid_post_quantum", "classical_only", "symmetric", "unknown"]
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "environment": {
+          "type": "string",
+          "minLength": 1
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1
+        },
+        "data_flow": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key_size_bits": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "certificate_not_after": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "secrecy_lifetime_years": {
+          "type": "number",
+          "minimum": 0
+        },
+        "source": {
+          "enum": ["terraform_plan", "cloud_api", "cbom", "network_scan", "application_scan", "manual_attestation"]
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "evidence_confidence": {
+          "enum": ["high", "medium", "low"]
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

@@ -1,44 +1,41 @@
-name: cmvp-status-monitor
-# Phase 4 — Continuous CMVP Status Monitor
-#
-# Weekly scheduled job that checks the NIST CMVP "Modules in Process" list
-# for a client-maintained watchlist of cryptographic libraries the program
-# depends on, and opens a tracking issue when a watched module's status
-# changes (e.g. advances toward or achieves full validation).
+name: cmvp-reference-validation
 
 on:
   schedule:
-    - cron: "0 13 * * 1" # every Monday 13:00 UTC
+    - cron: "0 13 * * 1"
   workflow_dispatch: {}
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
-  check-cmvp-status:
+  validate-reference:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Fetch CMVP Modules in Process list
-        run: |
-          curl -sSL "https://csrc.nist.gov/CSRC/media/Projects/cryptographic-module-validation-program/documents/modinprocess/MIP%20List.pdf" -o mip-list.pdf || true
-          echo "Fetched CMVP Modules in Process reference. Manual/automated diffing against watchlist.json should be implemented per client CMVP dependency list."
-
-      - name: Compare against watchlist
-        run: |
-          cat watchlist/cmvp-watchlist.json
-
-      - name: Open tracking issue on change
-        if: false # enable once diff logic against a stored previous snapshot is implemented
-        uses: actions/github-script@v7
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          script: |
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: "CMVP status change detected for a watched module",
-              body: "A watched cryptographic module's CMVP validation status has changed. Review reports/cmvp-diff.json for details.",
-              labels: ["compliance", "pqc"],
-            });
+          persist-credentials: false
+
+      - name: Validate the local watchlist
+        run: |
+          jq -e 'type == "object" or type == "array"' watchlist/cmvp-watchlist.json >/dev/null
+
+      - name: Fetch the CMVP Modules in Process reference
+        run: |
+          mkdir -p reports
+          curl --fail --silent --show-error --location \
+            "https://csrc.nist.gov/CSRC/media/Projects/cryptographic-module-validation-program/documents/modinprocess/MIP%20List.pdf" \
+            --output reports/mip-list.pdf
+          test "$(head -c 4 reports/mip-list.pdf)" = "%PDF"
+          sha256sum reports/mip-list.pdf > reports/mip-list.pdf.sha256
+
+      - name: Upload reference evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cmvp-reference
+          path: reports/
+          if-no-files-found: error
+          retention-days: 30

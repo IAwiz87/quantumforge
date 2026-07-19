@@ -1,90 +1,201 @@
 name: pqc-compliance-gate
-# Phase 3 & 4 — Crypto-Agility Gate + Continuous Compliance Evidence
-#
-# Runs the full policy-as-code gate on every PR and produces a signed,
-# retained evidence bundle on every merge to main. Uses OIDC federation
-# for AWS credentials — no long-lived static keys stored in the repo.
 
 on:
   pull_request:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch: {}
 
 permissions:
-  id-token: write
   contents: read
 
+env:
+  TF_IN_AUTOMATION: "true"
+  AWS_EC2_METADATA_DISABLED: "true"
+  OPA_VERSION: "1.18.2"
+  CONFTEST_VERSION: "0.68.2"
+  CHECKOV_VERSION: "3.3.8"
+  CHECK_JSONSCHEMA_VERSION: "0.37.4"
+
 jobs:
-  compliance-gate:
+  offline-validation:
+    name: Credential-free Terraform, policy, and evidence tests
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
-      # Uncomment once a QuantumForge evidence IAM role has been provisioned
-      # for this repository (see README > CI/CD Setup).
-      # - name: Configure AWS credentials (OIDC)
-      #   uses: aws-actions/configure-aws-credentials@v4
-      #   with:
-      #     role-to-assume: ${{ secrets.QUANTUMFORGE_EVIDENCE_ROLE_ARN }}
-      #     aws-region: us-east-1
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - name: Set up OPA
+        uses: open-policy-agent/setup-opa@b2b258e089860efaadaaf71bf6e3aecb4a3eeff1 # v2.4.0
+        with:
+          version: ${{ env.OPA_VERSION }}
 
-      - name: Terraform init & plan
+      - name: Install verified Conftest release
+        run: sudo ./scripts/install-conftest.sh /usr/local/bin
+
+      - name: Verify formatting and configuration
         run: |
-          terraform init -input=false
-          terraform plan -input=false -out=tfplan
-          terraform show -json tfplan > plan.json
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform validate
 
-      - name: Setup OPA & Conftest
+      - name: Run Terraform native mock tests without AWS credentials
+        env:
+          AWS_ACCESS_KEY_ID: ""
+          AWS_SECRET_ACCESS_KEY: ""
+          AWS_SESSION_TOKEN: ""
+          AWS_PROFILE: ""
         run: |
-          curl -sSLo /usr/local/bin/opa "https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static"
-          chmod +x /usr/local/bin/opa
-          curl -sSLo conftest.tar.gz "https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_0.56.0_Linux_x86_64.tar.gz"
-          tar -xzf conftest.tar.gz -C /usr/local/bin conftest
+          terraform test
+          terraform -chdir=modules/pqc-kms-signing init -backend=false -input=false
+          terraform -chdir=modules/pqc-kms-signing test
+          terraform -chdir=modules/hybrid-pqc-alb init -backend=false -input=false
+          terraform -chdir=modules/hybrid-pqc-alb test
 
-      - name: Unit-test all policies
+      - name: Unit-test all deterministic policies
+        run: opa test -v policies/
+
+      - name: Verify hybrid PQ plan passes the deployment gate
         run: |
-          opa test -v policies/discovery/ policies/scoring/ policies/hybrid/
+          mkdir -p build/evidence
+          conftest test examples/sandbox/mock-plan-hybrid-pass.json \
+            --policy policies \
+            --output json > build/evidence/conftest-report.json
 
-      - name: Trivy IaC scan
-        uses: aquasecurity/trivy-action@master
+      - name: Verify classical-only plan is denied for the expected reasons
+        run: |
+          set +e
+          conftest test examples/sandbox/mock-plan-classical-fail.json \
+            --policy policies \
+            --output json > build/classical-denial.json
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          jq -e '[.[].failures[]?] | length >= 2' build/classical-denial.json >/dev/null
+
+      - name: Generate a fail-closed crypto census from a fixture
+        run: |
+          cp examples/sandbox/mock-plan-hybrid-pass.json build/evidence/plan.json
+          ./scripts/run-census.sh build/evidence/plan.json build/evidence
+
+      - name: Distinguish no assets from collection failure
+        run: |
+          printf '%s\n' '{"format_version":"1.2","resource_changes":[]}' > build/empty-plan.json
+          ./scripts/run-census.sh build/empty-plan.json build/empty-census
+          jq -e '.status == "no_assets_found" and .total_assets == 0' \
+            build/empty-census/assessment-status.json >/dev/null
+          set +e
+          ./scripts/run-census.sh build/missing-plan.json build/failed-census
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          jq -e '.status == "collection_failed"' \
+            build/failed-census/assessment-status.json >/dev/null
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Validate the vendor-neutral inventory schema
+        run: |
+          python -m pip install --disable-pip-version-check "check-jsonschema==${CHECK_JSONSCHEMA_VERSION}"
+          check-jsonschema \
+            --schemafile schemas/crypto-inventory.schema.json \
+            examples/inventory/mixed-platform-inventory.json
+
+      - name: Run Checkov
+        run: |
+          python -m pip install --disable-pip-version-check "checkov==${CHECKOV_VERSION}"
+          checkov --directory . \
+            --framework terraform github_actions \
+            --quiet --compact \
+            --output json \
+            --output-file-path build/checkov
+          cp build/checkov/results_json.json build/evidence/checkov-report.json
+          jq -e 'if type == "array" then all(.[]; .summary.failed == 0 and .summary.parsing_errors == 0) else .summary.failed == 0 and .summary.parsing_errors == 0 end' \
+            build/evidence/checkov-report.json >/dev/null
+
+      - name: Run Trivy IaC scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config
           scan-ref: .
           format: json
-          output: trivy-report.json
+          output: build/evidence/trivy-report.json
+          severity: HIGH,CRITICAL
+          exit-code: "1"
 
-      - name: Checkov scan
+      - name: Generate CBOM
         run: |
-          pip install checkov
-          checkov -d . --output json --output-file-path checkov-report.json || true
+          ./scripts/generate-cbom.py build/evidence/cbom.json
+          jq -e '.bomFormat == "CycloneDX" and .specVersion == "1.5" and (.components | length >= 10)' \
+            build/evidence/cbom.json >/dev/null
 
-      - name: Crypto-agility gate (Rego / Conftest)
+      - name: Build complete evidence bundle
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_WORKFLOW: ${{ github.workflow }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: ./scripts/build-evidence.py build/evidence build/quantumforge-offline-evidence.zip
+
+      - name: Reject incomplete or failed evidence bundles
         run: |
-          conftest test plan.json -p policies/hybrid/ --output json > conftest-report.json
-          cat conftest-report.json
-          conftest test plan.json -p policies/hybrid/
+          cp -R build/evidence build/incomplete-evidence
+          rm build/incomplete-evidence/cbom.json
+          if ./scripts/build-evidence.py build/incomplete-evidence build/invalid-missing.zip; then
+            echo "Evidence builder accepted a missing CBOM" >&2
+            exit 1
+          fi
+          cp build/evidence/cbom.json build/incomplete-evidence/cbom.json
+          jq '.status = "collection_failed"' build/evidence/assessment-status.json \
+            > build/incomplete-evidence/assessment-status.json
+          if ./scripts/build-evidence.py build/incomplete-evidence build/invalid-status.zip; then
+            echo "Evidence builder accepted a failed assessment" >&2
+            exit 1
+          fi
 
-      - name: Regenerate CBOM
-        run: |
-          npm install -g @cyclonedx/cdxgen
-          cdxgen -t terraform -o cbom.json . || true
-
-      - name: Assemble evidence bundle
-        if: github.event_name == 'push'
-        run: |
-          mkdir -p evidence
-          cp plan.json trivy-report.json checkov-report.json conftest-report.json cbom.json evidence/ 2>/dev/null || true
-          echo "{\"commit\":\"${{ github.sha }}\",\"timestamp\":\"$(date -u +%FT%TZ)\",\"repo\":\"${{ github.repository }}\"}" > evidence/manifest.json
-          zip -r "pqc-evidence-$(date -u +%F).zip" evidence/
-
-      - name: Upload evidence artifact
-        if: github.event_name == 'push'
-        uses: actions/upload-artifact@v4
+      - name: Upload short-lived CI evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pqc-compliance-evidence
-          path: pqc-evidence-*.zip
-          retention-days: 2555
+          name: quantumforge-offline-evidence
+          path: |
+            build/quantumforge-offline-evidence.zip
+            build/quantumforge-offline-evidence.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  attest-offline-evidence:
+    name: Attest trusted main-branch evidence
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: offline-validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Download validated evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.0
+        with:
+          name: quantumforge-offline-evidence
+          path: build
+
+      - name: Attest complete evidence bundle
+        uses: actions/attest-build-provenance@6f4598ea9f7c8e033b76ef2e31b1d5892424044d # v4.1.0
+        with:
+          subject-path: build/quantumforge-offline-evidence.zip

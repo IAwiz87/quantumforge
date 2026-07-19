@@ -1,84 +1,188 @@
 # QuantumForge — Phase 1: Discovery & Inventory
 #
-# Classifies cryptographic assets found in a `terraform show -json` plan or
-# state document by algorithm family, so a complete crypto census can be
-# built without touching production systems directly.
-#
-# Input shape: standard Terraform plan/state JSON, i.e. a document with a
-# top-level `resource_changes` array where each entry has `type`, `address`,
-# and `change.after` (the post-apply attribute values).
+# Classifies representative AWS cryptographic resources from Terraform plan
+# JSON. Every entry is normalized enough to map into schemas/crypto-asset.schema.json.
+# Unsupported and provider-managed values remain "unknown" rather than being
+# counted as clean.
 
 package quantumforge.discovery
 
 import rego.v1
 
-# --- Reference sets -----------------------------------------------------
-
-classical_only_key_specs := {
+classical_key_specs := {
 	"RSA_2048", "RSA_3072", "RSA_4096",
 	"ECC_NIST_P256", "ECC_NIST_P384", "ECC_NIST_P521", "ECC_SECG_P256K1",
+	"EC_prime256v1", "EC_secp384r1",
 }
 
-post_quantum_key_spec_prefixes := {"ML_DSA_", "ML_KEM_"}
+post_quantum_key_specs := {"ML_DSA_44", "ML_DSA_65", "ML_DSA_87"}
 
-# --- KMS key classification ----------------------------------------------
-
-classify_kms_key(after) := "post_quantum" if {
-	some prefix in post_quantum_key_spec_prefixes
-	startswith(after.customer_master_key_spec, prefix)
+approved_hybrid_tls_policies := {
+	"ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09",
+	"ELBSecurityPolicy-TLS13-1-2-Res-FIPS-PQ-2025-09",
+	"ELBSecurityPolicy-TLS13-1-3-PQ-2025-09",
+	"ELBSecurityPolicy-TLS13-1-3-FIPS-PQ-2025-09",
 }
 
-classify_kms_key(after) := "classical_only" if {
-	after.customer_master_key_spec in classical_only_key_specs
+first_object(value) := value if is_object(value)
+else := value[0] if {
+	is_array(value)
+	count(value) > 0
+	is_object(value[0])
 }
+else := {}
 
-classify_kms_key(after) := "symmetric" if {
-	after.customer_master_key_spec == "SYMMETRIC_DEFAULT"
+classify_key_spec(spec) := "post_quantum" if spec in post_quantum_key_specs
+else := "classical_only" if spec in classical_key_specs
+else := "symmetric" if spec == "SYMMETRIC_DEFAULT"
+else := "unknown"
+
+classify_tls_policy(policy) := "hybrid_post_quantum" if policy in approved_hybrid_tls_policies
+else := "classical_only" if {
+	is_string(policy)
+	policy != ""
 }
-
-classify_kms_key(after) := "unknown" if {
-	spec := after.customer_master_key_spec
-	not spec in classical_only_key_specs
-	not spec == "SYMMETRIC_DEFAULT"
-	not startswith(spec, "ML_DSA_")
-	not startswith(spec, "ML_KEM_")
-}
-
-# --- TLS listener classification -----------------------------------------
-
-classify_tls_listener(after) := "hybrid_post_quantum" if {
-	after.protocol == "HTTPS"
-	contains(after.ssl_policy, "PQ")
-}
-
-classify_tls_listener(after) := "classical_only" if {
-	after.protocol == "HTTPS"
-	not contains(after.ssl_policy, "PQ")
-}
-
-# --- Inventory assembly ----------------------------------------------------
+else := "unknown"
 
 inventory contains entry if {
-	some rc in input.resource_changes
+	some rc in object.get(input, "resource_changes", [])
 	rc.type == "aws_kms_key"
+	after := object.get(rc.change, "after", null)
+	is_object(after)
+	spec := object.get(after, "customer_master_key_spec", "unknown")
 	entry := {
+		"asset_id": rc.address,
 		"address": rc.address,
+		"provider": "aws",
+		"resource_type": rc.type,
 		"type": rc.type,
-		"classification": classify_kms_key(rc.change.after),
+		"crypto_function": object.get(after, "key_usage", "unknown"),
+		"algorithm": spec,
+		"classification": classify_key_spec(spec),
+		"source": "terraform_plan",
 	}
 }
 
 inventory contains entry if {
-	some rc in input.resource_changes
+	some rc in object.get(input, "resource_changes", [])
 	rc.type == "aws_lb_listener"
+	after := object.get(rc.change, "after", null)
+	is_object(after)
+	protocol := object.get(after, "protocol", "unknown")
+	protocol in {"HTTPS", "TLS"}
+	policy := object.get(after, "ssl_policy", "unknown")
 	entry := {
+		"asset_id": rc.address,
 		"address": rc.address,
+		"provider": "aws",
+		"resource_type": rc.type,
 		"type": rc.type,
-		"classification": classify_tls_listener(rc.change.after),
+		"crypto_function": "tls_termination",
+		"protocol": protocol,
+		"algorithm": policy,
+		"classification": classify_tls_policy(policy),
+		"source": "terraform_plan",
 	}
 }
 
-# --- Roll-up summary for the executive briefing ---------------------------
+inventory contains entry if {
+	some rc in object.get(input, "resource_changes", [])
+	rc.type == "aws_acm_certificate"
+	after := object.get(rc.change, "after", null)
+	is_object(after)
+	algorithm := object.get(after, "key_algorithm", "unknown")
+	entry := {
+		"asset_id": rc.address,
+		"address": rc.address,
+		"provider": "aws",
+		"resource_type": rc.type,
+		"type": rc.type,
+		"crypto_function": "certificate",
+		"algorithm": algorithm,
+		"classification": classify_key_spec(algorithm),
+		"source": "terraform_plan",
+	}
+}
+
+inventory contains entry if {
+	some rc in object.get(input, "resource_changes", [])
+	rc.type == "aws_acmpca_certificate_authority"
+	after := object.get(rc.change, "after", null)
+	is_object(after)
+	algorithm := object.get(after, "key_algorithm", "unknown")
+	entry := {
+		"asset_id": rc.address,
+		"address": rc.address,
+		"provider": "aws",
+		"resource_type": rc.type,
+		"type": rc.type,
+		"crypto_function": "certificate_authority",
+		"algorithm": algorithm,
+		"classification": classify_key_spec(algorithm),
+		"source": "terraform_plan",
+	}
+}
+
+inventory contains entry if {
+	some rc in object.get(input, "resource_changes", [])
+	rc.type == "aws_cloudfront_distribution"
+	after := object.get(rc.change, "after", null)
+	is_object(after)
+	viewer := first_object(object.get(after, "viewer_certificate", {}))
+	minimum_protocol := object.get(viewer, "minimum_protocol_version", "unknown")
+	entry := {
+		"asset_id": rc.address,
+		"address": rc.address,
+		"provider": "aws",
+		"resource_type": rc.type,
+		"type": rc.type,
+		"crypto_function": "tls_termination",
+		"protocol": minimum_protocol,
+		"algorithm": "provider_managed",
+		"classification": "unknown",
+		"source": "terraform_plan",
+	}
+}
+
+inventory contains entry if {
+	some rc in object.get(input, "resource_changes", [])
+	rc.type in {"aws_api_gateway_domain_name", "aws_apigatewayv2_domain_name"}
+	after := object.get(rc.change, "after", null)
+	is_object(after)
+	configuration := first_object(object.get(after, "domain_name_configuration", after))
+	security_policy := object.get(configuration, "security_policy", object.get(after, "security_policy", "unknown"))
+	entry := {
+		"asset_id": rc.address,
+		"address": rc.address,
+		"provider": "aws",
+		"resource_type": rc.type,
+		"type": rc.type,
+		"crypto_function": "tls_termination",
+		"protocol": security_policy,
+		"algorithm": "provider_managed",
+		"classification": "unknown",
+		"source": "terraform_plan",
+	}
+}
+
+inventory contains entry if {
+	some rc in object.get(input, "resource_changes", [])
+	rc.type == "aws_vpn_connection"
+	after := object.get(rc.change, "after", null)
+	is_object(after)
+	entry := {
+		"asset_id": rc.address,
+		"address": rc.address,
+		"provider": "aws",
+		"resource_type": rc.type,
+		"type": rc.type,
+		"crypto_function": "network_encryption",
+		"protocol": "IPsec/IKE",
+		"algorithm": "provider_or_tunnel_configured",
+		"classification": "unknown",
+		"source": "terraform_plan",
+	}
+}
 
 pqc_ready_classifications := {"post_quantum", "hybrid_post_quantum"}
 

@@ -52,7 +52,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.60"   # 5.60+ ships ML_DSA_44/65/87 key_spec support on aws_kms_key
+      version = "~> 6.2"   # 6.2+ supports ML_DSA_44/65/87 on aws_kms_key
     }
     azurerm = {
       source  = "hashicorp/azurerm"
@@ -271,11 +271,11 @@ Both feeds are normalized into Rego facts and classified by a shared policy libr
 5. Run the classifier against the extracted state and pipe to a CBOM merge for the full inventory:
    ```bash
    opa eval -d policies/discovery -i ingest/tfstate-$(date +%F).json "data.discovery.inventory" > reports/iac-inventory.json
-   cdxgen -t terraform -o reports/iac.cdx.json .
+   ./scripts/generate-cbom.py reports/iac.cdx.json
    cdxgen -r -o reports/code.cdx.json ./src
    cyclonedx-cli merge --input-files reports/iac.cdx.json reports/code.cdx.json --output-file reports/full-crypto-census.cdx.json
    ```
-6. Wire steps 4–5 into a GitHub Actions job (`.github/workflows/census.yml`) triggered on every pull request so newly introduced non-agile cryptography is caught at commit time, not audit time.
+6. Wire steps 4–5 into a GitHub Actions job (`.github/workflows/pqc-compliance-gate.yml`) triggered on every pull request so newly introduced non-agile cryptography is caught at commit time, not audit time.
 
 **Client-ready deliverables:**
 
@@ -292,31 +292,33 @@ Both feeds are normalized into Rego facts and classified by a shared policy libr
 
 **Objective:** Convert the raw inventory into a prioritized, deadline-anchored remediation roadmap.
 
-**Technical approach:** Discovery-phase policies answer "what is it?" — Phase 2 policies answer "how urgently does it need to move?" This means evolving the Rego library from binary classification into weighted scoring functions that combine three inputs per asset: HNDL exposure (how long must this data stay confidential — a signature with a 1-year validity has very different urgency than a KMS key protecting 20-year medical records), data classification/sensitivity, and estimated remediation cost/complexity. Every scoring function is unit-tested with `opa test` before it is trusted for client-facing prioritization output — a miscalibrated score that under-prioritizes a critical asset is worse than no score at all.
+**Technical approach:** Discovery-phase policies answer "what is it?" — Phase 2 policies answer "how urgently does it need to move?" The risk model combines HNDL exposure, data classification, and business impact. Migration deadline, remediation effort, and evidence confidence remain separate outputs. A difficult migration must never appear less risky merely because it is expensive. Missing metadata is invalid rather than receiving an optimistic default. Every scoring function is unit-tested with `opa test` before it is trusted for client-facing prioritization output.
 
 **Setup steps:**
 1. Extend the Phase 1 repo with a scoring module (`policies/scoring/risk_score.rego`):
    ```rego
-   package scoring
+   package quantumforge.scoring
 
-   import future.keywords.if
+   import rego.v1
 
    hndl_weight(years) := 40 if years >= 10
    hndl_weight(years) := 25 if years >= 5; years < 10
    hndl_weight(years) := 10 if years < 5
 
-   classification_weight("nss") := 40
-   classification_weight("regulated") := 25
+   classification_weight("nss") := 30
+   classification_weight("regulated") := 20
    classification_weight("internal") := 10
+   classification_weight("public") := 0
 
-   remediation_cost_weight("low") := 20
-   remediation_cost_weight("medium") := 10
-   remediation_cost_weight("high") := 5
+   impact_weight("mission_critical") := 30
+   impact_weight("business_critical") := 20
+   impact_weight("operational") := 10
+   impact_weight("informational") := 5
 
-   score(asset) := total if {
+   inherent_risk_score(asset) := total if {
        total := hndl_weight(asset.data_retention_years) +
                  classification_weight(asset.data_classification) +
-                 remediation_cost_weight(asset.remediation_cost)
+                 impact_weight(asset.impact)
    }
 
    tier(asset) := "critical" if score(asset) >= 80
@@ -347,18 +349,18 @@ Both feeds are normalized into Rego facts and classified by a shared policy libr
 
 ### Phase 3 — Cryptographic Agility Architecture: Hybrid-PQC Testing
 
-**Objective:** Design, provision, and validate hybrid classical+PQC infrastructure so the client can move now without waiting on full FIPS 140-3 PQC module validation.
+**Objective:** Design, provision, and validate PQC infrastructure. Keep pure post-quantum signing distinct from hybrid classical-plus-PQC key establishment.
 
-**Technical approach:** This is where discovery and prioritization convert into actual provisioned infrastructure. The core workflow — `terraform init → terraform plan -out=tfplan → terraform show -json → conftest test` — is unchanged from any mature Terraform policy-gating pipeline; what changes is that the modules under test now provision **hybrid** key-establishment infrastructure, and the Conftest/Rego policies must additionally enforce that only NIST-approved combiner constructions (SP 800-56C/SP 800-133-compliant, e.g. X-Wing-style ML-KEM+X25519 combination) are used — never ad hoc secret concatenation.
+**Technical approach:** This is where discovery and prioritization convert into provisioned infrastructure. AWS KMS ML-DSA is pure FIPS 204 post-quantum signing. The ELB policy is hybrid ML-KEM plus classical key establishment for migration compatibility. The policy gate therefore uses exact service-supported algorithm and policy allowlists rather than claiming that every resource implements a hybrid combiner.
 
 As of this writing, real hybrid-PQC capability exists concretely on AWS and should be the primary target for production Terraform modules:
 - **AWS KMS** supports ML-DSA signing keys natively via `key_spec = "ML_DSA_44" | "ML_DSA_65" | "ML_DSA_87"` on `aws_kms_key`, using the `ML_DSA_SHAKE_256` signing algorithm, generated and protected inside FIPS 140-3 Level 3 validated HSMs ([AWS KMS docs](https://docs.aws.amazon.com/kms/latest/developerguide/mldsa.html)).
-- **AWS ALB/NLB** support hybrid post-quantum TLS via the `ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09` security policy, which offers `X25519MLKEM768`, `SecP256r1MLKEM768`, and `SecP384r1MLKEM1024` hybrid key-exchange groups while gracefully falling back to classical TLS for non-PQC-capable clients ([AWS ELB docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/describe-ssl-policies.html)).
+- **AWS Application Load Balancers** support hybrid post-quantum TLS on `HTTPS` listeners through policies such as `ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09`, which offers `X25519MLKEM768` and classical compatibility. This repository's deployment module is ALB-only. Network Load Balancers use `TLS` listeners and require a separate implementation and runtime validation.
 - **AWS ACM, Secrets Manager, and KMS API endpoints** already support ML-KEM hybrid key agreement on non-FIPS endpoints across all commercial regions ([AWS announcement](https://aws-news.com/article/2025-04-07-ml-kem-post-quantum-tls-now-supported-in-aws-kms-acm-and-secrets-manager)).
 - **Azure** is behind AWS here: SymCrypt (Azure's underlying crypto library) gained ML-KEM/ML-DSA support in late 2024, but Azure Key Vault and Managed HSM PQC support is still tracking through 2026 and is not yet available for direct Terraform provisioning. Treat Azure PQC as a monitored roadmap item in this phase, not a deployable Terraform target — document readiness but do not promise client-facing Azure PQC infrastructure yet.
 
 **Setup steps:**
-1. Add a hybrid-PQC module to the Terraform repo (`modules/hybrid-pqc-kms/main.tf`):
+1. Add a pure post-quantum signing module to the Terraform repo (`modules/pqc-kms-signing/main.tf`):
    ```hcl
    resource "aws_kms_key" "pqc_signing" {
      description              = "ML-DSA post-quantum signing key"
@@ -449,87 +451,18 @@ As of this writing, real hybrid-PQC capability exists concretely on AWS and shou
 **Technical approach:** Every prior phase produces artifacts (inventory JSON, risk scores, Terraform plans, policy test results) that are only valuable to an auditor if they're captured, timestamped, and retrievable on demand. This phase wires the entire toolchain into a single CI pipeline that runs on every merge to `main`, producing a signed evidence bundle mapped to control IDs, and layers OSCAL-formatted control mapping on top so the evidence speaks the same language as formal compliance frameworks (SP 800-53, SOC 2, etc.).
 
 **Setup steps:**
-1. Create the CI evidence pipeline (`.github/workflows/pqc-compliance-gate.yml`):
-   ```yaml
-   name: pqc-compliance-gate
-   on:
-     pull_request:
-     push:
-       branches: [main]
-
-   permissions:
-     id-token: write   # required for OIDC AWS auth — no long-lived static keys
-     contents: read
-
-   jobs:
-     evidence:
-       runs-on: ubuntu-latest
-       steps:
-         - uses: actions/checkout@v4
-
-         - name: Configure AWS credentials (OIDC)
-           uses: aws-actions/configure-aws-credentials@v4
-           with:
-             role-to-assume: ${{ secrets.PQC_EVIDENCE_ROLE_ARN }}
-             aws-region: us-east-1
-
-         - name: Setup Terraform
-           uses: hashicorp/setup-terraform@v3
-
-         - name: Terraform plan
-           run: |
-             terraform init
-             terraform plan -out=tfplan
-             terraform show -json tfplan > plan.json
-
-         - name: Trivy IaC scan
-           uses: aquasecurity/trivy-action@master
-           with:
-             scan-type: config
-             scan-ref: .
-             format: json
-             output: trivy-report.json
-
-         - name: Checkov scan
-           run: pip install checkov && checkov -d . --output json > checkov-report.json
-
-         - name: Rego / Conftest crypto-agility gate
-           run: |
-             conftest test plan.json -p policies/hybrid/ --output json > conftest-report.json
-
-         - name: Regenerate CBOM
-           run: |
-             npm install -g @cyclonedx/cdxgen
-             cdxgen -t terraform -o cbom.json .
-
-         - name: Assemble evidence bundle
-           run: |
-             mkdir -p evidence
-             cp plan.json trivy-report.json checkov-report.json conftest-report.json cbom.json evidence/
-             echo "{\"commit\":\"${{ github.sha }}\",\"timestamp\":\"$(date -u +%FT%TZ)\"}" > evidence/manifest.json
-             zip -r pqc-evidence-$(date +%F).zip evidence/
-
-         - name: Upload evidence artifact
-           uses: actions/upload-artifact@v4
-           with:
-             name: pqc-compliance-evidence
-             path: pqc-evidence-*.zip
-             retention-days: 2555   # 7 years, typical audit retention requirement
-   ```
-2. Map evidence artifacts to formal controls with `compliance-trestle`, generating OSCAL assessment-results documents that reference the CI-produced evidence bundle by commit SHA:
+1. Use `.github/workflows/pqc-compliance-gate.yml` for pull requests and pushes. This workflow is deliberately credential-free, has only `contents: read`, checks out without persisting the GitHub token, and fails when Terraform, policy, scanner, schema, CBOM, or evidence generation fails.
+2. Keep AWS credentials out of pull-request execution. Run `.github/workflows/aws-live-pqc-validation.yml` only by manual dispatch from `main`, behind the protected `quantumforge-aws-sandbox` environment. Its jobs receive job-scoped `id-token: write` and use GitHub OIDC to assume a dedicated sandbox role.
+3. Build evidence with `scripts/build-evidence.py`, attest the complete ZIP with GitHub artifact attestations, retain the ordinary workflow copy for only 30 days, and optionally publish the attested bundle with `scripts/publish-evidence-s3.sh` to a separately administered S3 Object Lock bucket. GitHub artifact retention alone is not a seven-year record system.
+4. Map evidence artifacts to formal controls with `compliance-trestle`, generating OSCAL assessment-results documents that reference the CI-produced evidence bundle by commit SHA:
    ```bash
    trestle init
    trestle author profile-generate -n pqc-readiness -o pqc-readiness-profile
    # populate implemented-requirements referencing SC-12 (key management) and SC-13 (cryptographic protection)
    trestle validate -f pqc-readiness-profile/profile.json
    ```
-3. Add a scheduled (not just on-push) job that polls the [NIST CMVP Modules in Process list](https://csrc.nist.gov/projects/cryptographic-module-validation-program/modules-in-process/modules-in-process-list) weekly and opens a tracking issue automatically when a dependent library's module advances to full validation:
-   ```yaml
-   on:
-     schedule:
-       - cron: "0 13 * * 1"   # every Monday
-   ```
-4. Feed accumulated evidence bundles into Heimdall2 for a rolling compliance dashboard the client's GRC/security team can review without opening individual JSON artifacts.
+5. Use `.github/workflows/cmvp-monitor.yml` to validate the repository's pinned watchlist and retrieve a checksummed copy of NIST's Modules in Process PDF every week. It does not claim to parse status changes or open issues until a tested collector is added.
+6. Feed accumulated evidence bundles into Heimdall2 for a rolling compliance dashboard the client's GRC/security team can review without opening individual JSON artifacts.
 
 **Client-ready deliverables:**
 
@@ -551,7 +484,7 @@ Follow this sequence exactly on a fresh workstation/repo to stand up the entire 
    ```
    pqc-readiness-program/
    ├── modules/
-   │   ├── hybrid-pqc-kms/
+   │   ├── pqc-kms-signing/
    │   └── hybrid-pqc-alb/
    ├── policies/
    │   ├── discovery/
@@ -563,12 +496,12 @@ Follow this sequence exactly on a fresh workstation/repo to stand up the entire 
    ├── evidence/
    ├── versions.tf
    └── .github/workflows/
-       ├── census.yml
-       └── pqc-compliance-gate.yml
+       ├── pqc-compliance-gate.yml
+       └── aws-live-pqc-validation.yml
    ```
-3. **Phase 1 — stand up discovery:** write and unit-test the classification policy, extract `terraform show -json` from every managed environment, run the CBOM generation, wire the `census.yml` PR-triggered workflow. Confirm you can produce a full Cryptographic Asset Inventory Report on demand.
+3. **Phase 1 — stand up discovery:** write and unit-test the classification policy, extract `terraform show -json` from every managed environment, run the CBOM generation, wire the `pqc-compliance-gate.yml` PR workflow. Confirm you can produce a full Cryptographic Asset Inventory Report on demand.
 4. **Phase 2 — layer in scoring:** write and unit-test the risk-scoring policy, run it against the Phase 1 inventory, cross-reference CMVP status, and produce the first Priority Matrix.
-5. **Phase 3 — provision and validate hybrid infrastructure:** author the `hybrid-pqc-kms` and `hybrid-pqc-alb` Terraform modules, write the combiner-validation Conftest policy, run `terraform plan → show -json → conftest test` end to end against a sandbox AWS account, and validate real handshake behavior with the `liboqs-python` test harness plus Terratest.
+5. **Phase 3 — provision and validate PQC infrastructure:** author the pure ML-DSA `pqc-kms-signing` module and the hybrid key-establishment `hybrid-pqc-alb` module, test Terraform contracts with native mock providers, and run the isolated AWS lifecycle scripts to prove KMS sign/verify plus real ALB PQ-capable and classical-fallback TLS negotiation.
 6. **Phase 4 — close the loop with continuous evidence:** deploy `pqc-compliance-gate.yml`, confirm it produces a complete evidence ZIP on a test PR, map evidence to OSCAL controls with `compliance-trestle`, and stand up the scheduled CMVP monitor job.
 7. **First full end-to-end run:** open a PR that modifies a Terraform module, and confirm all four phases fire correctly in sequence — discovery re-classifies the change, scoring re-prioritizes if needed, the crypto-agility gate blocks or allows the plan, and the evidence bundle is produced and archived — before merging to `main`.
 8. **Ongoing operation:** every subsequent PR runs the same pipeline automatically; the quarterly attestation report and CMVP monitor run on schedule without further manual intervention.

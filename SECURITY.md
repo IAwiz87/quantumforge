@@ -28,7 +28,7 @@ Instead, use GitHub's private reporting flow:
 1. Go to the [Security tab](https://github.com/IAwiz87/quantumforge/security) of this repository.
 2. Click **"Report a vulnerability"** to open a private security advisory.
 3. Include as much detail as you can:
-   - Affected file(s)/module(s) (e.g. `modules/hybrid-pqc-kms`, a specific `.rego` policy, a workflow file)
+   - Affected file(s)/module(s) (e.g. `modules/pqc-kms-signing`, a specific `.rego` policy, a workflow file)
    - Steps to reproduce, or a minimal Terraform/OPA example that demonstrates the issue
    - Impact assessment (what a successful exploit would let an attacker do)
    - Any suggested remediation, if you have one
@@ -46,8 +46,8 @@ clearly in the advisory description.
 
 **In scope:**
 
-- Terraform modules in `modules/` (`hybrid-pqc-kms`, `hybrid-pqc-alb`) and the root module — misconfigurations that could provision weaker-than-intended cryptography, overly permissive IAM, or insecure defaults
-- Rego policies in `policies/` (`discovery`, `scoring`, `hybrid`) — logic errors that would allow a `deny` rule to be bypassed, misclassify an asset, or under-score real risk
+- Terraform modules in `modules/` (`pqc-kms-signing`, `hybrid-pqc-alb`) and the root module — misconfigurations that could provision weaker-than-intended cryptography, overly permissive IAM, or insecure defaults
+- Rego policies in `policies/` (`discovery`, `scoring`, `hybrid`, `governance`, `inventory`) — logic errors that would allow a `deny` rule to be bypassed, misclassify an asset, accept an expired exception, or under-score real risk
 - GitHub Actions workflows in `.github/workflows/` — supply-chain issues (e.g. unpinned actions, script injection via untrusted PR input), secret handling, or OIDC role-assumption misconfigurations
 - The Conftest compliance gate and its mock-plan fixtures in `examples/sandbox/`
 
@@ -70,9 +70,9 @@ This project follows coordinated disclosure:
 
 For context when evaluating reports, some intentional design decisions:
 
-- **No static AWS credentials.** CI workflows are wired for OIDC federation (`aws-actions/configure-aws-credentials` with a role ARN via the `QUANTUMFORGE_EVIDENCE_ROLE_ARN` secret) rather than long-lived access keys. The credential step is commented out until a real least-privilege role is supplied — it will not silently run with no credentials configured.
+- **No AWS credentials in pull requests.** The PR compliance workflow has only `contents: read` and does not receive OIDC authority. The separate live workflow is manual, restricted to `main`, protected by the `quantumforge-aws-sandbox` environment, and uses job-scoped GitHub OIDC with repository environment variables rather than long-lived access keys.
 - **Fail-safe policy default.** `policies/hybrid/combiner.rego` defaults `enforce_cutover` to `true`, meaning ambiguous or missing configuration blocks non-compliant crypto by default rather than allowing it through.
-- **Asymmetric KMS keys cannot auto-rotate.** `hybrid-pqc-kms` intentionally sets `enable_key_rotation = false` because AWS KMS does not support automatic rotation for `SIGN_VERIFY` asymmetric keys — this is a platform constraint, not an oversight, and rotation must be handled operationally (re-key + policy cutover).
+- **Asymmetric KMS keys cannot auto-rotate.** `pqc-kms-signing` intentionally sets `enable_key_rotation = false` because AWS KMS does not support automatic rotation for `SIGN_VERIFY` asymmetric keys — this is a platform constraint, not an oversight, and rotation must be handled operationally (re-key + policy cutover).
 - **Mock plan fixtures are synthetic.** Everything under `examples/sandbox/` uses fictitious ARNs and account IDs for policy unit testing — they do not correspond to any real AWS account or resource.
 
 ## Using This Repo Securely
