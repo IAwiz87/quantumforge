@@ -1,16 +1,31 @@
 variable "load_balancer_arn" {
-  description = "ARN of an existing Application or Network Load Balancer to attach the hybrid-PQC listener to."
+  description = "ARN of an existing Application Load Balancer to attach the hybrid-PQC HTTPS listener to. Network Load Balancers use TLS listeners and are intentionally out of scope for this module."
   type        = string
+
+  validation {
+    condition     = can(regex(":elasticloadbalancing:[^:]+:[0-9]{12}:loadbalancer/app/", var.load_balancer_arn))
+    error_message = "load_balancer_arn must be an Application Load Balancer ARN containing loadbalancer/app/. Network Load Balancers require a separate TLS listener module."
+  }
 }
 
 variable "certificate_arn" {
-  description = "ACM certificate ARN presented by the HTTPS listener."
+  description = "ARN of the ACM certificate to use for the HTTPS listener."
   type        = string
+
+  validation {
+    condition     = can(regex(":acm:[^:]+:[0-9]{12}:certificate/", var.certificate_arn))
+    error_message = "certificate_arn must be an ACM certificate ARN."
+  }
 }
 
 variable "target_group_arn" {
-  description = "ARN of the target group receiving forwarded traffic."
+  description = "ARN of the target group that receives traffic from the hybrid-PQC listener."
   type        = string
+
+  validation {
+    condition     = can(regex(":elasticloadbalancing:[^:]+:[0-9]{12}:targetgroup/", var.target_group_arn))
+    error_message = "target_group_arn must be an ELBv2 target-group ARN."
+  }
 }
 
 variable "port" {
@@ -25,8 +40,13 @@ variable "ssl_policy" {
   default     = "ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09"
 
   validation {
-    condition     = endswith(var.ssl_policy, "PQ-2025-09") || endswith(var.ssl_policy, "Res-PQ")
-    error_message = "ssl_policy must be a hybrid post-quantum policy (name must contain 'PQ') — this module exists specifically to enforce PQ-capable listeners. Use the aws_lb_listener resource directly for classical-only listeners."
+    condition = contains([
+      "ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09",
+      "ELBSecurityPolicy-TLS13-1-2-Res-FIPS-PQ-2025-09",
+      "ELBSecurityPolicy-TLS13-1-3-PQ-2025-09",
+      "ELBSecurityPolicy-TLS13-1-3-FIPS-PQ-2025-09",
+    ], var.ssl_policy)
+    error_message = "ssl_policy must be an explicitly approved AWS hybrid post-quantum ALB policy."
   }
 }
 

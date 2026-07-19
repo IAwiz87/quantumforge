@@ -1,7 +1,8 @@
-# QuantumForge — hybrid-pqc-kms
+# QuantumForge — pqc-kms-signing
 #
 # Provisions an AWS KMS asymmetric signing key using a NIST FIPS 204 (ML-DSA)
-# post-quantum key spec. Keys are generated and protected inside FIPS 140-3
+# post-quantum key spec. This is pure ML-DSA signing, not a classical/PQC
+# hybrid signature construction. Keys are generated and protected inside FIPS 140-3
 # Security Level 3 validated HSMs by AWS KMS.
 #
 # Reference: https://docs.aws.amazon.com/kms/latest/developerguide/mldsa.html
@@ -18,20 +19,20 @@ locals {
       AWS = var.key_administrators
     }
     Action = [
-      "kms:Create*",
-      "kms:Describe*",
-      "kms:Enable*",
-      "kms:List*",
-      "kms:Put*",
-      "kms:Update*",
-      "kms:Revoke*",
-      "kms:Disable*",
-      "kms:Get*",
-      "kms:Delete*",
+      "kms:CancelKeyDeletion",
+      "kms:DescribeKey",
+      "kms:DisableKey",
+      "kms:EnableKey",
+      "kms:GetKeyPolicy",
+      "kms:ListGrants",
+      "kms:ListKeyPolicies",
+      "kms:ListResourceTags",
+      "kms:PutKeyPolicy",
+      "kms:RevokeGrant",
+      "kms:ScheduleKeyDeletion",
       "kms:TagResource",
       "kms:UntagResource",
-      "kms:ScheduleKeyDeletion",
-      "kms:CancelKeyDeletion",
+      "kms:UpdateKeyDescription",
     ]
     Resource = "*"
   }] : []
@@ -81,6 +82,17 @@ resource "aws_kms_key" "pqc_signing" {
   enable_key_rotation = false
 
   policy = local.key_policy
+
+  lifecycle {
+    precondition {
+      condition = alltrue([
+        for arn in concat(var.key_administrators, var.key_users) :
+        startswith(arn, "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/") ||
+        startswith(arn, "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:user/")
+      ])
+      error_message = "key_administrators and key_users must belong to the current AWS account."
+    }
+  }
 
   tags = merge(var.tags, {
     "quantumforge:algorithm-family" = "post-quantum"

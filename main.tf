@@ -1,20 +1,23 @@
 # QuantumForge
-# Root module wiring the hybrid-PQC reference modules together.
+# Root module wiring the PQC reference modules together.
 #
-# This root module is intentionally conditional (enable_* flags) so it can
-# be `terraform validate`'d and `terraform plan`'d with zero required inputs
-# in CI, while still being usable as a real deployable root for a sandbox
-# or production account by supplying the existing_* variables.
+# Deployable resources are opt-in. Pull-request CI exercises them with
+# Terraform's native mock provider; live plans run only in an authenticated
+# sandbox integration workflow.
 
-
-module "hybrid_pqc_kms" {
-  count  = var.enable_hybrid_pqc_kms ? 1 : 0
-  source = "./modules/hybrid-pqc-kms"
+module "pqc_kms_signing" {
+  count  = var.enable_pqc_kms_signing ? 1 : 0
+  source = "./modules/pqc-kms-signing"
 
   key_alias   = "quantumforge-${var.environment}-signing"
   description = "QuantumForge ${var.environment} ML-DSA post-quantum signing key"
   key_spec    = "ML_DSA_65"
   tags        = var.tags
+}
+
+moved {
+  from = module.hybrid_pqc_kms[0]
+  to   = module.pqc_kms_signing[0]
 }
 
 module "hybrid_pqc_alb" {

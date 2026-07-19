@@ -4,12 +4,10 @@ terraform {
 
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.60" # 5.60+ ships ML_DSA_44 / ML_DSA_65 / ML_DSA_87 key_spec support on aws_kms_key
-    }
-    azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "~> 3.100"
+      source = "hashicorp/aws"
+      # ML-DSA support for aws_kms_key landed in 6.1.0. That release was
+      # withdrawn; 6.2.0 contains the same feature plus the corrective fix.
+      version = "~> 6.2"
     }
   }
 

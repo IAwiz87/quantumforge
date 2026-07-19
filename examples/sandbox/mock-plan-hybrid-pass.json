@@ -1,7 +1,7 @@
 {
   "resource_changes": [
     {
-      "address": "module.hybrid_pqc_kms.aws_kms_key.pqc_signing",
+      "address": "module.pqc_kms_signing.aws_kms_key.pqc_signing",
       "type": "aws_kms_key",
       "change": {"after": {"key_usage": "SIGN_VERIFY", "customer_master_key_spec": "ML_DSA_65"}}
     },

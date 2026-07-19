@@ -1,11 +1,14 @@
 # QuantumForge — hybrid-pqc-alb
 #
-# Provisions an HTTPS listener using AWS's hybrid post-quantum TLS security
+# Provisions an Application Load Balancer HTTPS listener using AWS's hybrid
+# post-quantum TLS security
 # policy (ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09), which offers
 # X25519MLKEM768, SecP256r1MLKEM768, and SecP384r1MLKEM1024 hybrid key
 # exchange to PQ-capable clients while gracefully falling back to classical
 # TLS 1.2/1.3 for clients that don't yet support ML-KEM.
 #
+# Network Load Balancers use protocol TLS and are intentionally outside this
+# module's contract.
 # Reference: https://docs.aws.amazon.com/elasticloadbalancing/latest/application/describe-ssl-policies.html
 
 resource "aws_lb_listener" "hybrid_pqc_https" {
