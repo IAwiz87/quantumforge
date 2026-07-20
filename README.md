@@ -141,7 +141,7 @@ The current implementation was exercised with:
 |---|---|
 | Root `terraform validate` and format check | Passed |
 | Terraform native mock tests | Root 2/2, KMS 6/6, ALB 5/5 passed without credentials |
-| OPA 1.18.2 | 42/42 tests passed |
+| OPA 1.18.2 | 57/57 tests passed |
 | Conftest | Generated hybrid plan passed; generated classical-only plan was denied with 2 failures; malformed plan was blocked |
 | Checkov 3.3.8 / Trivy 0.69.2 | Zero blocking findings; scanner images pinned by digest |
 | Live AWS KMS | `ML_DSA_65` created, KMS sign/verify passed, OpenSSL 3.5.7 verification passed, key entered `PendingDeletion` |

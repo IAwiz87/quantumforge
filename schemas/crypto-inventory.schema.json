@@ -106,7 +106,16 @@
         },
         "migration_deadline_months": {
           "type": "number",
-          "minimum": 0
+          "description": "Months remaining until the migration deadline. Negative values represent an already-overdue asset and are valid input, not an error. Takes precedence over regulatory_category when both are present."
+        },
+        "regulatory_category": {
+          "description": "CNSA 2.0 equipment category used to derive a calendar-anchored migration deadline when migration_deadline_months is not set explicitly.",
+          "enum": ["software_firmware_signing", "web_cloud_services", "traditional_networking", "operating_systems", "niche_equipment", "custom_legacy"]
+        },
+        "dependent_asset_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of other inventoried assets that depend on this one. Used only to advise reviewers that impact may be underrated for high fan-in assets; never overrides the manually assigned impact tier."
         },
         "remediation_effort": {
           "enum": ["low", "medium", "high"]

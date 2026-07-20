@@ -305,6 +305,9 @@ Collected records are normalized into the versioned inventory envelope and class
    tier(asset) := "medium" if migration_urgency_score(asset) >= 35; migration_urgency_score(asset) < 60
    tier(asset) := "low" if migration_urgency_score(asset) < 35
    ```
+
+   > **Note:** this snippet is the Phase 2 origin design and is kept as-written for history. The shipped `policies/scoring/risk_score.rego` has since evolved past it — `deadline_weight`'s additive-and-clamped formula collapsed differentiation once `inherent_risk_score` hit 80, so `migration_urgency_score` is now an explicit 80/20 blend against a separate `deadline_pressure_score` scale, deadlines can be calendar-anchored to a `regulatory_category` instead of only a hand-entered `migration_deadline_months`, and `tier` is now derived from `inherent_risk_score` rather than the blended urgency score. See [docs/SCORING_METHODOLOGY.md](SCORING_METHODOLOGY.md) for the current model and rationale.
+
 2. Write unit tests covering boundary conditions on every tier threshold before deployment:
    ```bash
    opa test -v policies/scoring/
