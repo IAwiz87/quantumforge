@@ -1,0 +1,45 @@
+name: aws-live-pqc-janitor
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quantumforge-aws-live-janitor
+  cancel-in-progress: false
+
+jobs:
+  remove-expired-fixtures:
+    name: Remove expired tagged AWS fixtures
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: quantumforge-aws-sandbox-janitor
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out cleanup tooling
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to isolated AWS sandbox
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6.0.0
+        with:
+          role-to-assume: ${{ vars.QUANTUMFORGE_AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+          role-session-name: quantumforge-janitor-${{ github.run_id }}
+
+      - name: Remove expired tagged resources
+        env:
+          AWS_REGION: us-east-1
+          QUANTUMFORGE_ALLOW_LIVE_AWS_TESTS: "1"
+          QUANTUMFORGE_EXPECTED_ACCOUNT_ID: ${{ vars.QUANTUMFORGE_AWS_ACCOUNT_ID }}
+        run: ./scripts/aws/cleanup-expired-live-resources.sh

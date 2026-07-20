@@ -51,8 +51,8 @@ valid_nonnegative_number(value) if {
 } else := false
 
 metadata_checks(asset) := {
-	"address must be a non-empty string": valid_nonempty_string(object.get(asset, "address", null)),
-	"data_retention_years must be a non-negative number": valid_nonnegative_number(object.get(asset, "data_retention_years", null)),
+	"asset_id must be a non-empty string": valid_nonempty_string(object.get(asset, "asset_id", null)),
+	"secrecy_lifetime_years must be a non-negative number": valid_nonnegative_number(object.get(asset, "secrecy_lifetime_years", null)),
 	"data_classification is missing or unsupported": object.get(asset, "data_classification", null) in classification_values,
 	"impact is missing or unsupported": object.get(asset, "impact", null) in impact_values,
 	"migration_deadline_months must be a non-negative number": valid_nonnegative_number(object.get(asset, "migration_deadline_months", null)),
@@ -69,7 +69,7 @@ is_valid(asset) if count(metadata_errors(asset)) == 0
 
 inherent_risk_score(asset) := total if {
 	is_valid(asset)
-	total := hndl_weight(asset.data_retention_years) +
+	total := hndl_weight(asset.secrecy_lifetime_years) +
 		classification_weight(asset.data_classification) +
 		impact_weight(asset.impact)
 }
@@ -96,7 +96,7 @@ scored_inventory contains entry if {
 	some asset in input.assets
 	is_valid(asset)
 	entry := {
-		"address": asset.address,
+		"asset_id": asset.asset_id,
 		"inherent_risk_score": inherent_risk_score(asset),
 		"migration_urgency_score": migration_urgency_score(asset),
 		"tier": tier(asset),
@@ -110,16 +110,16 @@ invalid_inventory contains entry if {
 	errors := metadata_errors(asset)
 	count(errors) > 0
 	entry := {
-		"address": object.get(asset, "address", "unknown"),
+		"asset_id": object.get(asset, "asset_id", "unknown"),
 		"errors": sort(errors),
 	}
 }
 
 priority_matrix := {
-	"critical": sort([e.address | some e in scored_inventory; e.tier == "critical"]),
-	"high": sort([e.address | some e in scored_inventory; e.tier == "high"]),
-	"medium": sort([e.address | some e in scored_inventory; e.tier == "medium"]),
-	"low": sort([e.address | some e in scored_inventory; e.tier == "low"]),
+	"critical": sort([e.asset_id | some e in scored_inventory; e.tier == "critical"]),
+	"high": sort([e.asset_id | some e in scored_inventory; e.tier == "high"]),
+	"medium": sort([e.asset_id | some e in scored_inventory; e.tier == "medium"]),
+	"low": sort([e.asset_id | some e in scored_inventory; e.tier == "low"]),
 }
 
 assessment := {

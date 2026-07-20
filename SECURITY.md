@@ -70,7 +70,7 @@ This project follows coordinated disclosure:
 
 For context when evaluating reports, some intentional design decisions:
 
-- **No AWS credentials in pull requests.** The PR compliance workflow has only `contents: read` and does not receive OIDC authority. The separate live workflow is manual, restricted to `main`, protected by the `quantumforge-aws-sandbox` environment, and uses job-scoped GitHub OIDC with repository environment variables rather than long-lived access keys.
+- **No AWS credentials in pull requests.** The PR compliance workflow has only `contents: read` and does not receive OIDC authority. The separate live workflow is manual, restricted to `main`, protected by the `quantumforge-aws-sandbox` environment, and uses job-scoped GitHub OIDC rather than long-lived access keys. A second exact-subject, main-only janitor environment supports tag-based post-job and scheduled cleanup without granting PR authority.
 - **Fail-safe policy default.** `policies/hybrid/combiner.rego` defaults `enforce_cutover` to `true`, meaning ambiguous or missing configuration blocks non-compliant crypto by default rather than allowing it through.
 - **Asymmetric KMS keys cannot auto-rotate.** `pqc-kms-signing` intentionally sets `enable_key_rotation = false` because AWS KMS does not support automatic rotation for `SIGN_VERIFY` asymmetric keys — this is a platform constraint, not an oversight, and rotation must be handled operationally (re-key + policy cutover).
 - **Mock plan fixtures are synthetic.** Everything under `examples/sandbox/` uses fictitious ARNs and account IDs for policy unit testing — they do not correspond to any real AWS account or resource.
@@ -80,7 +80,7 @@ For context when evaluating reports, some intentional design decisions:
 If you deploy QuantumForge's modules in your own environment:
 
 - Review every `terraform plan` before `apply` — this repo does not apply changes on your behalf.
-- Scope the CI role referenced by `QUANTUMFORGE_EVIDENCE_ROLE_ARN` to the minimum permissions needed for evidence collection, not broad account access.
+- Scope the protected live workflow role referenced by `QUANTUMFORGE_AWS_ROLE_ARN` to the isolated sandbox. Apply the exact OIDC subject/audience boundary and least-privilege permissions templates under `docs/aws/`; do not grant the role to pull-request jobs or add Object Lock administration/deletion rights.
 - Do not commit `.tfstate`, `.tfvars` with real values, or any AWS credentials — `.gitignore` excludes common cases, but double-check before pushing forks or branches.
 - Treat the `evidence/`, `ingest/`, and `reports/` directories as sensitive once populated by CI — they may contain infrastructure and compliance details you don't want public.
 

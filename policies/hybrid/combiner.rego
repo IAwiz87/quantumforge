@@ -29,7 +29,58 @@ approved_hybrid_tls_policies := {
 	"ELBSecurityPolicy-TLS13-1-3-FIPS-PQ-2025-09",
 }
 
-assessment_time := object.get(runtime_config, "assessment_time", "")
+deny contains "input must be a Terraform plan JSON object" if {
+	not is_object(input)
+}
+
+deny contains "input.resource_changes must be an array" if {
+	is_object(input)
+	not is_array(object.get(input, "resource_changes", null))
+}
+
+valid_change_after(change) if {
+	is_object(object.get(change, "after", null))
+}
+
+valid_change_after(change) if {
+	object.get(change, "after", null) == null
+	actions := object.get(change, "actions", [])
+	"delete" in actions
+}
+
+valid_change_actions(change) if {
+	actions := object.get(change, "actions", null)
+	is_array(actions)
+	count(actions) > 0
+	every action in actions {
+		is_string(action)
+		trim_space(action) != ""
+	}
+}
+
+valid_resource_change(rc) if {
+	is_object(rc)
+	address := object.get(rc, "address", null)
+	is_string(address)
+	trim_space(address) != ""
+	type_name := object.get(rc, "type", null)
+	is_string(type_name)
+	trim_space(type_name) != ""
+	change := object.get(rc, "change", null)
+	is_object(change)
+	valid_change_actions(change)
+	valid_change_after(change)
+}
+
+deny contains "input.resource_changes contains a malformed entry" if {
+	is_array(object.get(input, "resource_changes", null))
+	some rc in input.resource_changes
+	not valid_resource_change(rc)
+}
+
+# Deployment exceptions are evaluated against OPA's runtime clock. Policy data
+# cannot freeze or backdate expiry checks.
+assessment_time := time.format([time.now_ns(), "UTC", "2006-01-02T15:04:05Z07:00"])
 exceptions := object.get(runtime_config, "exceptions", [])
 
 is_exempt(address) if {

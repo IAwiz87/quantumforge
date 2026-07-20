@@ -15,8 +15,9 @@ env:
   AWS_EC2_METADATA_DISABLED: "true"
   OPA_VERSION: "1.18.2"
   CONFTEST_VERSION: "0.68.2"
-  CHECKOV_VERSION: "3.3.8"
+  CHECKOV_IMAGE: "bridgecrew/checkov@sha256:c64ffb6d6fc8087c896341a2c697770a04a1cf558db04fa7b8129d8ca6bce336"
   CHECK_JSONSCHEMA_VERSION: "0.37.4"
+  CHECK_JSONSCHEMA_SHA256: "e4d1647992674d6b1ed2ca46eee6697760d17a5cc0c167ba09c5b503b883d041"
 
 jobs:
   offline-validation:
@@ -56,11 +57,12 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ""
           AWS_SESSION_TOKEN: ""
           AWS_PROFILE: ""
+          AWS_DEFAULT_PROFILE: ""
         run: |
           terraform test
-          terraform -chdir=modules/pqc-kms-signing init -backend=false -input=false
+          terraform -chdir=modules/pqc-kms-signing init -backend=false -input=false -lockfile=readonly
           terraform -chdir=modules/pqc-kms-signing test
-          terraform -chdir=modules/hybrid-pqc-alb init -backend=false -input=false
+          terraform -chdir=modules/hybrid-pqc-alb init -backend=false -input=false -lockfile=readonly
           terraform -chdir=modules/hybrid-pqc-alb test
 
       - name: Unit-test all deterministic policies
@@ -85,6 +87,8 @@ jobs:
           jq -e '[.[].failures[]?] | length >= 2' build/classical-denial.json >/dev/null
 
       - name: Generate a fail-closed crypto census from a fixture
+        env:
+          QUANTUMFORGE_ASSESSMENT_SCOPE: synthetic_fixture
         run: |
           cp examples/sandbox/mock-plan-hybrid-pass.json build/evidence/plan.json
           ./scripts/run-census.sh build/evidence/plan.json build/evidence
@@ -102,6 +106,21 @@ jobs:
           test "$rc" -ne 0
           jq -e '.status == "collection_failed"' \
             build/failed-census/assessment-status.json >/dev/null
+          printf '%s\n' '{"format_version":"1.2","resource_changes":[{}]}' \
+            > build/malformed-plan.json
+          set +e
+          ./scripts/run-census.sh build/malformed-plan.json build/malformed-census
+          census_rc=$?
+          conftest test build/malformed-plan.json --policy policies --output json \
+            > build/malformed-denial.json
+          policy_rc=$?
+          set -e
+          test "$census_rc" -ne 0
+          test "$policy_rc" -ne 0
+          jq -e '.status == "collection_failed"' \
+            build/malformed-census/assessment-status.json >/dev/null
+          jq -e '[.[].failures[]? | select(.msg == "input.resource_changes contains a malformed entry")] | length == 1' \
+            build/malformed-denial.json >/dev/null
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
@@ -110,32 +129,98 @@ jobs:
 
       - name: Validate the vendor-neutral inventory schema
         run: |
-          python -m pip install --disable-pip-version-check "check-jsonschema==${CHECK_JSONSCHEMA_VERSION}"
+          mkdir -p build/check-jsonschema
+          python -m pip download --disable-pip-version-check --no-deps --only-binary=:all: \
+            "check-jsonschema==${CHECK_JSONSCHEMA_VERSION}" \
+            --dest build/check-jsonschema
+          wheel="build/check-jsonschema/check_jsonschema-${CHECK_JSONSCHEMA_VERSION}-py3-none-any.whl"
+          test -s "$wheel"
+          printf '%s  %s\n' "$CHECK_JSONSCHEMA_SHA256" "$wheel" | sha256sum -c -
+          python -m pip install --disable-pip-version-check "$wheel"
           check-jsonschema \
             --schemafile schemas/crypto-inventory.schema.json \
-            examples/inventory/mixed-platform-inventory.json
+            examples/inventory/mixed-platform-inventory.json \
+            examples/inventory/scoring-ready-inventory.json \
+            build/evidence/iac-inventory.json
+
+      - name: Exercise schema-compatible risk enrichment and scoring
+        run: |
+          jq '.assets |= map(. + {
+            secrecy_lifetime_years: 10,
+            data_classification: "internal",
+            impact: "operational",
+            migration_deadline_months: 12,
+            remediation_effort: "medium"
+          })' build/evidence/iac-inventory.json > build/evidence/risk-input.json
+          check-jsonschema \
+            --schemafile schemas/crypto-inventory.schema.json \
+            build/evidence/risk-input.json
+          opa eval --format raw \
+            --data policies \
+            --input build/evidence/risk-input.json \
+            'data.quantumforge.scoring.assessment' \
+            > build/evidence/risk-assessment.json
+          jq -e '
+            .valid_asset_count == 2 and
+            .invalid_asset_count == 0 and
+            (.scored_inventory | length) == 2
+          ' build/evidence/risk-assessment.json >/dev/null
 
       - name: Run Checkov
         run: |
-          python -m pip install --disable-pip-version-check "checkov==${CHECKOV_VERSION}"
-          checkov --directory . \
+          mkdir -p build/checkov
+          docker run --rm \
+            -v "$PWD:/repo:ro" \
+            -v "$PWD/build/checkov:/output" \
+            "$CHECKOV_IMAGE" \
+            --directory /repo \
             --framework terraform github_actions \
-            --quiet --compact \
+            --compact \
+            --quiet \
             --output json \
-            --output-file-path build/checkov
+            --output-file-path /output
           cp build/checkov/results_json.json build/evidence/checkov-report.json
-          jq -e 'if type == "array" then all(.[]; .summary.failed == 0 and .summary.parsing_errors == 0) else .summary.failed == 0 and .summary.parsing_errors == 0 end' \
-            build/evidence/checkov-report.json >/dev/null
+          jq -e '
+            if type == "array" then
+              all(.[]; .summary.failed == 0 and .summary.parsing_errors == 0)
+            else
+              .summary.failed == 0 and .summary.parsing_errors == 0
+            end
+          ' build/evidence/checkov-report.json >/dev/null
 
       - name: Run Trivy IaC scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: config
-          scan-ref: .
-          format: json
-          output: build/evidence/trivy-report.json
-          severity: HIGH,CRITICAL
-          exit-code: "1"
+        run: |
+          docker run --rm \
+            -v "$PWD:/work:ro" \
+            -v "$PWD/build/evidence:/output" \
+            aquasec/trivy@sha256:3d1f862cb6c4fe13c1506f96f816096030d8d5ccdb2380a3069f7bf07daa86aa \
+            config \
+            --skip-version-check \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            --format json \
+            --output /output/trivy-report.json \
+            /work
+          jq -e '
+            ([.Results[]?] | length) > 0 and
+            ([.Results[]?.Misconfigurations[]? | select(.Status == "FAIL")] | length) == 0
+          ' build/evidence/trivy-report.json >/dev/null
+
+      - name: Run Trivy secret scan
+        run: |
+          docker run --rm \
+            -v "$PWD:/work:ro" \
+            -v "$PWD/build/evidence:/output" \
+            aquasec/trivy@sha256:3d1f862cb6c4fe13c1506f96f816096030d8d5ccdb2380a3069f7bf07daa86aa \
+            fs \
+            --skip-version-check \
+            --scanners secret \
+            --exit-code 1 \
+            --format json \
+            --output /output/trivy-secret-report.json \
+            /work
+          jq -e '([.Results[]?.Secrets[]?] | length) == 0' \
+            build/evidence/trivy-secret-report.json >/dev/null
 
       - name: Generate CBOM
         run: |
@@ -149,7 +234,7 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_WORKFLOW: ${{ github.workflow }}
           GITHUB_RUN_ID: ${{ github.run_id }}
-        run: ./scripts/build-evidence.py build/evidence build/quantumforge-offline-evidence.zip
+        run: ./scripts/build-evidence.py build/evidence build/quantumforge-framework-validation.zip
 
       - name: Reject incomplete or failed evidence bundles
         run: |
@@ -166,14 +251,48 @@ jobs:
             echo "Evidence builder accepted a failed assessment" >&2
             exit 1
           fi
+          cp -R build/evidence build/mismatched-evidence
+          jq '.total_assets += 1' build/mismatched-evidence/census-summary.json \
+            > build/mismatched-evidence/census-summary.json.tmp
+          mv build/mismatched-evidence/census-summary.json.tmp \
+            build/mismatched-evidence/census-summary.json
+          if ./scripts/build-evidence.py build/mismatched-evidence build/invalid-counts.zip; then
+            echo "Evidence builder accepted mismatched inventory counts" >&2
+            exit 1
+          fi
+          cp -R build/evidence build/mismatched-risk-evidence
+          jq '.assets[0].asset_id = "different.synthetic.asset"' \
+            build/mismatched-risk-evidence/risk-input.json \
+            > build/mismatched-risk-evidence/risk-input.json.tmp
+          mv build/mismatched-risk-evidence/risk-input.json.tmp \
+            build/mismatched-risk-evidence/risk-input.json
+          if ./scripts/build-evidence.py build/mismatched-risk-evidence build/invalid-risk.zip; then
+            echo "Evidence builder accepted mismatched risk asset IDs" >&2
+            exit 1
+          fi
+          cp -R build/evidence build/private-environment-evidence
+          jq '.assessment_scope = "environment"' \
+            build/private-environment-evidence/assessment-status.json \
+            > build/private-environment-evidence/assessment-status.json.tmp
+          mv build/private-environment-evidence/assessment-status.json.tmp \
+            build/private-environment-evidence/assessment-status.json
+          jq '._privacy_test = "arn:aws:kms:us-east-1:123456789012:key/example"' \
+            build/private-environment-evidence/plan.json \
+            > build/private-environment-evidence/plan.json.tmp
+          mv build/private-environment-evidence/plan.json.tmp \
+            build/private-environment-evidence/plan.json
+          if ./scripts/build-evidence.py build/private-environment-evidence build/invalid-private.zip; then
+            echo "Evidence builder accepted a private environment identifier" >&2
+            exit 1
+          fi
 
       - name: Upload short-lived CI evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: quantumforge-offline-evidence
+          name: quantumforge-framework-validation
           path: |
-            build/quantumforge-offline-evidence.zip
-            build/quantumforge-offline-evidence.zip.sha256
+            build/quantumforge-framework-validation.zip
+            build/quantumforge-framework-validation.zip.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -190,12 +309,67 @@ jobs:
 
     steps:
       - name: Download validated evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
-          name: quantumforge-offline-evidence
+          name: quantumforge-framework-validation
           path: build
 
+      - name: Verify evidence checksum
+        run: |
+          cd build
+          sha256sum -c quantumforge-framework-validation.zip.sha256
+
       - name: Attest complete evidence bundle
-        uses: actions/attest-build-provenance@6f4598ea9f7c8e033b76ef2e31b1d5892424044d # v4.1.0
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
-          subject-path: build/quantumforge-offline-evidence.zip
+          subject-path: build/quantumforge-framework-validation.zip
+
+  publish-offline-evidence:
+    name: Publish trusted evidence to immutable storage
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.QUANTUMFORGE_EVIDENCE_BUCKET != '' }}
+    needs: [offline-validation, attest-offline-evidence]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: quantumforge-aws-sandbox
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out publisher
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Download validated evidence
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: quantumforge-framework-validation
+          path: build
+
+      - name: Verify evidence checksum
+        run: |
+          cd build
+          sha256sum -c quantumforge-framework-validation.zip.sha256
+
+      - name: Configure scoped AWS credentials
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6.0.0
+        with:
+          role-to-assume: ${{ vars.QUANTUMFORGE_AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Verify sandbox identity
+        env:
+          EXPECTED_ACCOUNT: ${{ vars.QUANTUMFORGE_AWS_ACCOUNT_ID }}
+        run: |
+          test -n "$EXPECTED_ACCOUNT"
+          test "$(aws sts get-caller-identity --query Account --output text)" = "$EXPECTED_ACCOUNT"
+
+      - name: Publish immutable evidence version
+        env:
+          AWS_REGION: us-east-1
+        run: |
+          ./scripts/publish-evidence-s3.sh \
+            build/quantumforge-framework-validation.zip \
+            "${{ vars.QUANTUMFORGE_EVIDENCE_BUCKET }}"

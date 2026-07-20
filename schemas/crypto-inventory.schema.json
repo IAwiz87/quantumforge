@@ -98,6 +98,19 @@
           "type": "number",
           "minimum": 0
         },
+        "data_classification": {
+          "enum": ["nss", "regulated", "internal", "public"]
+        },
+        "impact": {
+          "enum": ["mission_critical", "business_critical", "operational", "informational"]
+        },
+        "migration_deadline_months": {
+          "type": "number",
+          "minimum": 0
+        },
+        "remediation_effort": {
+          "enum": ["low", "medium", "high"]
+        },
         "source": {
           "enum": ["terraform_plan", "cloud_api", "cbom", "network_scan", "application_scan", "manual_attestation"]
         },

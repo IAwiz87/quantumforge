@@ -1,4 +1,4 @@
-name: cmvp-reference-validation
+name: cmvp-reference-capture
 
 on:
   schedule:

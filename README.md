@@ -56,15 +56,15 @@ scripts/aws/                Guarded runtime lifecycle tests
 Both deployable root modules are disabled by default, so local validation and pull-request CI do not contact AWS.
 
 ```bash
-terraform init -backend=false
+terraform init -backend=false -lockfile=readonly
 terraform fmt -check -recursive
 terraform validate
 terraform test
 
-terraform -chdir=modules/pqc-kms-signing init -backend=false
+terraform -chdir=modules/pqc-kms-signing init -backend=false -lockfile=readonly
 terraform -chdir=modules/pqc-kms-signing test
 
-terraform -chdir=modules/hybrid-pqc-alb init -backend=false
+terraform -chdir=modules/hybrid-pqc-alb init -backend=false -lockfile=readonly
 terraform -chdir=modules/hybrid-pqc-alb test
 
 opa test -v policies
@@ -104,9 +104,9 @@ The canonical cross-platform model is [`schemas/crypto-inventory.schema.json`](s
 
 ## CI and live AWS validation
 
-`pqc-compliance-gate.yml` is credential-free and safe for pull requests. It fails on Terraform, OPA, Conftest, schema, Checkov, Trivy, CBOM, or evidence-generation errors. It never replaces a failed collection with an empty inventory.
+`pqc-compliance-gate.yml` is credential-free and safe for pull requests. It fails on Terraform, OPA, Conftest, schema, Checkov, Trivy, CBOM, or evidence-generation errors. Its normalized inventory has `assessment_scope: synthetic_fixture`: it proves framework behavior and never represents an AWS environment assessment.
 
-`aws-live-pqc-validation.yml` is manually triggered in a protected GitHub environment and authenticates through OIDC. It requires a dedicated sandbox account, an account-ID guard, a concurrency lock, timeouts, tagged resources, and unconditional cleanup. The ALB job is optional because it creates a paid resource.
+`aws-live-pqc-validation.yml` is manually triggered in a protected GitHub environment and authenticates through OIDC. It requires a dedicated sandbox account, an account-ID guard, a concurrency lock, timeouts, tagged resources, in-process cleanup, a post-job tag-based cleanup check, and an hourly expired-fixture janitor. The ALB job is optional because it creates a paid resource.
 
 See [Live AWS validation](docs/AWS_LIVE_TESTS.md).
 
@@ -119,7 +119,7 @@ Valid states are:
 - `collection_failed`
 - `not_assessed`
 
-Only the first two can produce a complete evidence bundle. GitHub keeps a short-term 30-day copy and attests the bundle's provenance. Seven-year retention is claimed only when publishing to a separately administered S3 Object Lock bucket configured for at least 2,555 days.
+Only the first two can produce a complete evidence bundle. GitHub keeps a short-term 30-day copy; a separate trusted `main` job attests the exact framework-validation ZIP. Seven-year retention is claimed only when the protected workflow publishes that ZIP to a separately administered S3 Object Lock bucket configured for at least 2,555 days.
 
 See [Evidence integrity and retention](docs/EVIDENCE.md).
 
@@ -131,10 +131,12 @@ The current implementation was exercised with:
 |---|---|
 | Root `terraform validate` and format check | Passed |
 | Terraform native mock tests | Root 2/2, KMS 6/6, ALB 5/5 passed without credentials |
-| OPA 1.18.2 | 35/35 tests passed |
-| Conftest | Hybrid fixture passed; classical fixture was denied with 2 failures |
+| OPA 1.18.2 | 42/42 tests passed |
+| Conftest | Hybrid fixture passed; classical fixture was denied with 2 failures; malformed plan failed closed |
+| Checkov 3.3.8 / Trivy 0.69.2 | Zero blocking findings; scanner images pinned by digest |
 | Live AWS KMS | `ML_DSA_65` created, KMS sign/verify passed, OpenSSL 3.5.7 verification passed, key entered `PendingDeletion` |
 | Live AWS ALB | TLS 1.3 negotiated `X25519MLKEM768`; classical fallback negotiated `X25519`; fixture cleanup enforced |
+| Live AWS janitor | Targeted and expiry modes removed tagged VPC/security-group smoke fixtures; residual count was zero |
 
 The repository does not claim that mocks emulate cryptography. Platform behavior is claimed only where the isolated live tests exercise the real AWS API and network path.
 

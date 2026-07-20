@@ -21,6 +21,7 @@ fi
 
 retain_until="$(date -u -d '+7 years' +%Y-%m-%dT%H:%M:%SZ)"
 bundle_sha256="$(sha256sum "$BUNDLE_PATH" | awk '{print $1}')"
+bundle_checksum_base64="$(openssl dgst -sha256 -binary "$BUNDLE_PATH" | base64 | tr -d '\n')"
 key="$PREFIX/$(date -u +%Y/%m/%d)/${GITHUB_REPOSITORY:-local}/${GITHUB_RUN_ID:-local}/$(basename "$BUNDLE_PATH")"
 
 aws s3api put-object \
@@ -50,8 +51,12 @@ head_result="$(aws s3api head-object \
   --region "$AWS_REGION" \
   --bucket "$BUCKET" \
   --key "$key" \
-  --version-id "$version_id")"
-jq -e --arg expected "$bundle_sha256" '.Metadata.sha256 == $expected' \
+  --version-id "$version_id" \
+  --checksum-mode ENABLED)"
+jq -e \
+  --arg expected_hex "$bundle_sha256" \
+  --arg expected_base64 "$bundle_checksum_base64" \
+  '.Metadata.sha256 == $expected_hex and .ChecksumSHA256 == $expected_base64' \
   <<<"$head_result" >/dev/null
 
 jq -n \

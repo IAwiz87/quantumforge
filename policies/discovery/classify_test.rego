@@ -94,6 +94,25 @@ test_deleted_resources_are_not_reported_as_active_assets if {
 	not "aws_kms_key.deleted" in {e.address | some e in result}
 }
 
+test_normalized_inventory_has_vendor_neutral_fields if {
+	input_with_time := object.union(sample_plan, {
+		"_quantumforge": {"observed_at": "2026-07-19T12:00:00Z"},
+	})
+	result := normalized_inventory with input as input_with_time
+	result.schema_version == "1.0.0"
+	count(result.assets) == 8
+	every asset in result.assets {
+		nonempty(asset.asset_id)
+		nonempty(asset.owner)
+		nonempty(asset.environment)
+		asset.observed_at == "2026-07-19T12:00:00Z"
+		asset.evidence_confidence in {"high", "low"}
+	}
+	some asset in result.assets
+	asset.resource_type == "aws_kms_key"
+	asset.crypto_function == "signing"
+}
+
 test_summary_preserves_unknown_as_first_class if {
 	result := summary with input as sample_plan
 	result.total_assets == 8

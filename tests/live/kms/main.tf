@@ -19,6 +19,10 @@ variable "run_id" {
   type = string
 }
 
+variable "expires_at" {
+  type = string
+}
+
 provider "aws" {
   region = var.aws_region
 }
@@ -35,7 +39,7 @@ module "pqc_kms_signing" {
     environment = "integration-test"
     owner       = "security-engineering"
     test-run    = var.run_id
-    expires-at  = "automatic-cleanup"
+    expires-at  = var.expires_at
   }
 }
 

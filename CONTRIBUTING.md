@@ -24,7 +24,7 @@ Please do **not** open a public issue for a security vulnerability — see [SECU
 
 You'll need:
 
-- [Terraform](https://developer.hashicorp.com/terraform/downloads) (validated against the version pinned in `versions.tf`)
+- [Terraform](https://developer.hashicorp.com/terraform/downloads) (CI uses 1.15.8; `versions.tf` declares the supported range)
 - [OPA](https://www.openpolicyagent.org/docs/latest/#running-opa) for Rego unit tests
 - [Conftest](https://www.conftest.dev/install/) for the compliance-gate tests against mock Terraform plans
 - Optionally, a dedicated AWS sandbox for the explicitly authorized live lifecycle scripts. Pull-request and module development never require AWS credentials.
@@ -35,9 +35,9 @@ cd quantumforge
 terraform init -backend=false -lockfile=readonly
 terraform validate
 terraform test
-terraform -chdir=modules/pqc-kms-signing init -backend=false
+terraform -chdir=modules/pqc-kms-signing init -backend=false -lockfile=readonly
 terraform -chdir=modules/pqc-kms-signing test
-terraform -chdir=modules/hybrid-pqc-alb init -backend=false
+terraform -chdir=modules/hybrid-pqc-alb init -backend=false -lockfile=readonly
 terraform -chdir=modules/hybrid-pqc-alb test
 opa test policies/ -v
 ```
@@ -57,7 +57,7 @@ quantumforge/
 │   ├── inventory/          # vendor-neutral inventory validation
 │   └── hybrid/             # package main — Conftest compliance gate
 ├── examples/sandbox/       # mock Terraform plan JSON fixtures for policy testing
-├── .github/workflows/      # credential-free gate, manual live tests, CMVP reference validation
+├── .github/workflows/      # credential-free gate, manual live tests, CMVP reference capture
 └── docs/                   # companion Build Guide + banner
 ```
 

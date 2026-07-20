@@ -54,10 +54,11 @@ jobs:
           test -n "$ACCOUNT_ID"
 
       - name: Authenticate to isolated AWS sandbox
-        uses: aws-actions/configure-aws-credentials@3d122535fae0e48eebf53a3bcee95529f1deaf1f # v5.1.1
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6.0.0
         with:
           role-to-assume: ${{ vars.QUANTUMFORGE_AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
           role-session-name: quantumforge-kms-${{ github.run_id }}
 
       - name: Run KMS lifecycle test
@@ -68,13 +69,16 @@ jobs:
         run: ./scripts/aws/kms-lifecycle-test.sh build/live-kms
 
       - name: Build complete evidence bundle
-        env:
-          AWS_ACCOUNT_ID: ${{ vars.QUANTUMFORGE_AWS_ACCOUNT_ID }}
         run: ./scripts/build-evidence.py build/live-kms build/quantumforge-kms-${{ github.run_id }}.zip kms
+
+      - name: Verify KMS evidence checksum
+        run: |
+          cd build
+          sha256sum -c quantumforge-kms-${{ github.run_id }}.zip.sha256
 
       - name: Attest KMS evidence bundle
         id: attest
-        uses: actions/attest-build-provenance@6f4598ea9f7c8e033b76ef2e31b1d5892424044d # v4.1.0
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: build/quantumforge-kms-${{ github.run_id }}.zip
 
@@ -92,14 +96,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: quantumforge-kms-failure-${{ github.run_id }}
-          path: build/live-kms
-          if-no-files-found: warn
-          retention-days: 7
 
   alb-pqtls-runtime:
     name: ALB hybrid PQ-TLS runtime
@@ -133,10 +129,11 @@ jobs:
           test -n "$ACCOUNT_ID"
 
       - name: Authenticate to isolated AWS sandbox
-        uses: aws-actions/configure-aws-credentials@3d122535fae0e48eebf53a3bcee95529f1deaf1f # v5.1.1
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6.0.0
         with:
           role-to-assume: ${{ vars.QUANTUMFORGE_AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
           role-session-name: quantumforge-alb-${{ github.run_id }}
 
       - name: Run ALB PQ-TLS runtime test
@@ -147,12 +144,15 @@ jobs:
         run: ./scripts/aws/alb-pqtls-lifecycle-test.sh build/live-alb
 
       - name: Build complete evidence bundle
-        env:
-          AWS_ACCOUNT_ID: ${{ vars.QUANTUMFORGE_AWS_ACCOUNT_ID }}
         run: ./scripts/build-evidence.py build/live-alb build/quantumforge-alb-${{ github.run_id }}.zip alb
 
+      - name: Verify ALB evidence checksum
+        run: |
+          cd build
+          sha256sum -c quantumforge-alb-${{ github.run_id }}.zip.sha256
+
       - name: Attest ALB evidence bundle
-        uses: actions/attest-build-provenance@6f4598ea9f7c8e033b76ef2e31b1d5892424044d # v4.1.0
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: build/quantumforge-alb-${{ github.run_id }}.zip
 
@@ -170,11 +170,35 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+  cleanup-live-resources:
+    name: Verify tag-based cleanup
+    if: ${{ always() && github.ref == 'refs/heads/main' }}
+    needs: [kms-lifecycle, alb-pqtls-runtime]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: quantumforge-aws-sandbox-janitor
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out cleanup tooling
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          name: quantumforge-alb-failure-${{ github.run_id }}
-          path: build/live-alb
-          if-no-files-found: warn
-          retention-days: 7
+          persist-credentials: false
+
+      - name: Authenticate to isolated AWS sandbox
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6.0.0
+        with:
+          role-to-assume: ${{ vars.QUANTUMFORGE_AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+          role-session-name: quantumforge-cleanup-${{ github.run_id }}
+
+      - name: Remove or verify resources for this run
+        env:
+          QUANTUMFORGE_ALLOW_LIVE_AWS_TESTS: "1"
+          QUANTUMFORGE_EXPECTED_ACCOUNT_ID: ${{ vars.QUANTUMFORGE_AWS_ACCOUNT_ID }}
+        run: |
+          ./scripts/aws/cleanup-expired-live-resources.sh \
+            --run-id gha-${{ github.run_id }}-${{ github.run_attempt }}

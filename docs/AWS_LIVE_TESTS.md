@@ -1,6 +1,6 @@
 # Live AWS validation
 
-Pull requests never need AWS credentials. Live tests run only from the manually triggered `aws-live-pqc-validation` workflow in the protected `quantumforge-aws-sandbox` environment.
+Pull requests never need AWS credentials. Live tests run only from the manually triggered `aws-live-pqc-validation` workflow in the protected `quantumforge-aws-sandbox` environment. Tag-based cleanup also runs in the separately protected `quantumforge-aws-sandbox-janitor` environment after each test and hourly for expired fixtures.
 
 ## Safety controls
 
@@ -8,23 +8,30 @@ Pull requests never need AWS credentials. Live tests run only from the manually 
 - `QUANTUMFORGE_EXPECTED_ACCOUNT_ID` must match `sts:GetCallerIdentity` or the scripts refuse to create resources.
 - A workflow-level concurrency group prevents overlapping live test runs.
 - Both scripts use cleanup traps. A successful test is changed to a failure if cleanup does not complete.
-- Resources are tagged with `project=quantumforge`, `environment=integration-test`, a run identifier, and an automatic-cleanup marker.
+- An independent `if: always()` cleanup job finds the current run by tags, and `.github/workflows/aws-live-pqc-janitor.yml` removes expired fixtures hourly if a runner is lost or forcibly canceled.
+- Resources are tagged with `project=quantumforge`, `environment=integration-test`, a run identifier, and an RFC3339 expiration one hour after creation.
 - Terraform state and generated private keys remain in a temporary directory and are deleted at exit.
 - The ALB fixture has no EC2 instances, NAT gateways, or registered targets.
 
 ## Repository configuration
 
-Create a GitHub environment named `quantumforge-aws-sandbox` with approval protection, then define these repository or environment variables:
+Create `quantumforge-aws-sandbox` with approval protection for manual tests. Create `quantumforge-aws-sandbox-janitor` restricted to `main` without a delayed approval gate so scheduled cleanup cannot be blocked. Define the role and account as repository variables so both environments receive them:
 
 | Variable | Required | Purpose |
 |---|---:|---|
 | `QUANTUMFORGE_AWS_ROLE_ARN` | yes | GitHub OIDC role in the isolated sandbox |
 | `QUANTUMFORGE_AWS_ACCOUNT_ID` | yes | Account guardrail checked before every live run |
-| `QUANTUMFORGE_EVIDENCE_BUCKET` | no | S3 Object Lock bucket with at least seven years of default retention |
+| `QUANTUMFORGE_EVIDENCE_BUCKET` | no | **Repository variable** naming an S3 Object Lock bucket with at least seven years of default retention; its presence enables the trusted-main publication job |
 
-The OIDC trust policy should restrict `sub` to this repository and the `quantumforge-aws-sandbox` environment. Do not grant the role to forked pull-request workflows.
+The OIDC trust policy must restrict `aud` to `sts.amazonaws.com` and `sub` to the two exact protected-environment subjects in `docs/aws/github-oidc-trust-policy.json`. Do not grant the role to forked or pull-request workflows.
 
-The KMS job needs only identity lookup plus KMS create, tag, alias, describe, public-key, sign, verify, disable, alias deletion, and schedule-deletion actions. The optional ALB job additionally needs temporary ACM certificate, VPC networking, security-group, and ELBv2 lifecycle actions. Scope permissions to the sandbox account and require the `project=quantumforge` tag where AWS supports tag conditions.
+Apply `docs/aws/live-validation-permissions-boundary.json` after substituting the sandbox account and region. Pre-provision the standard `AWSServiceRoleForElasticLoadBalancing` service-linked role in a fresh sandbox; the workflow role intentionally lacks `iam:CreateServiceLinkedRole`. If immutable publication is enabled, also substitute the dedicated evidence bucket; otherwise remove the three S3 allow statements while retaining the global explicit deny. Use the document as a permissions boundary as well as the reviewed role policy so later attachments cannot add broad AWS or Object Lock administration. The template exact-lists the KMS, ACM, VPC, security-group, ELBv2, tag-discovery, and immutable-evidence actions used by the fixtures and janitor, requires QuantumForge tags where the service exposes request/resource tag conditions, confines ELBv2 resources by name, and explicitly denies evidence deletion, retention bypass, bucket-policy changes, and Object Lock reconfiguration.
+
+If immutable publication is enabled, grant only the evidence prefix in the selected bucket: `s3:GetBucketObjectLockConfiguration`, `s3:PutObject`, `s3:PutObjectRetention`, `s3:GetObject`, `s3:GetObjectVersion`, and `s3:GetObjectRetention`. The boundary requires `COMPLIANCE` mode and at least 2,555 remaining retention days whenever object retention is set. The workflow role must not be able to suspend Object Lock, shorten retention, alter bucket policy, or delete retained versions.
+
+## Independent cleanup
+
+`scripts/aws/cleanup-expired-live-resources.sh --run-id <run-id>` removes resources from one run without Terraform state. With no run ID it selects only expired QuantumForge integration-test tags. KMS keys are accepted only in `PendingDeletion`; all other selected resources must be absent before the script exits successfully. The hourly janitor caps ordinary ALB orphan cost to approximately one additional billed hour if both the primary trap and post-job cleanup are lost.
 
 ## KMS lifecycle
 

@@ -7,6 +7,7 @@ set -Eeuo pipefail
 
 AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 RUN_ID="${QUANTUMFORGE_RUN_ID:-$(date -u +%Y%m%d%H%M%S)}"
+EXPIRES_AT="$(date -u -d '+1 hour' +%FT%TZ)"
 EVIDENCE_DIR="${1:-build/live-alb-evidence}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FIXTURE_DIR="$REPO_ROOT/tests/live/alb-pqtls"
@@ -29,7 +30,7 @@ cleanup() {
   if [[ -d "$TF_DATA_DIR" && -n "$certificate_arn" ]]; then
     for _ in 1 2 3; do
       if TF_DATA_DIR="$TF_DATA_DIR" terraform -chdir="$FIXTURE_DIR" destroy -auto-approve -input=false \
-        -var="aws_region=$AWS_REGION" -var="run_id=$RUN_ID" -var="certificate_arn=$certificate_arn" \
+        -var="aws_region=$AWS_REGION" -var="run_id=$RUN_ID" -var="certificate_arn=$certificate_arn" -var="expires_at=$EXPIRES_AT" \
         > "$EVIDENCE_DIR/terraform-destroy.log" 2>&1; then
         destroy_succeeded=1
         break
@@ -66,10 +67,9 @@ trap 'exit 143' TERM
 
 actual_account_id="$(aws sts get-caller-identity --query Account --output text)"
 if [[ "$actual_account_id" != "$QUANTUMFORGE_EXPECTED_ACCOUNT_ID" ]]; then
-  echo "Refusing live test in AWS account $actual_account_id; expected $QUANTUMFORGE_EXPECTED_ACCOUNT_ID" >&2
+  echo "Refusing live test: caller is not the expected isolated sandbox account" >&2
   exit 1
 fi
-export AWS_ACCOUNT_ID="$actual_account_id"
 
 docker run --rm --volume "$PRIVATE_DIR:/work" "$OPENSSL_IMAGE" sh -ec '
   apk add --no-cache "openssl=3.5.7-r0" >/dev/null
@@ -81,13 +81,13 @@ docker run --rm --volume "$PRIVATE_DIR:/work" "$OPENSSL_IMAGE" sh -ec '
 certificate_arn="$(aws acm import-certificate --region "$AWS_REGION" \
   --certificate "fileb://$PRIVATE_DIR/certificate.pem" \
   --private-key "fileb://$PRIVATE_DIR/private-key.pem" \
-  --tags Key=project,Value=quantumforge Key=environment,Value=integration-test Key=test-run,Value="$RUN_ID" \
+  --tags Key=project,Value=quantumforge Key=environment,Value=integration-test Key=test-run,Value="$RUN_ID" Key=expires-at,Value="$EXPIRES_AT" \
   --query CertificateArn --output text)"
 
 TF_DATA_DIR="$TF_DATA_DIR" terraform -chdir="$FIXTURE_DIR" init -input=false -lockfile=readonly \
   -backend-config="path=$STATE_PATH" > "$EVIDENCE_DIR/terraform-init.log"
 TF_DATA_DIR="$TF_DATA_DIR" terraform -chdir="$FIXTURE_DIR" plan -input=false \
-  -var="aws_region=$AWS_REGION" -var="run_id=$RUN_ID" -var="certificate_arn=$certificate_arn" \
+  -var="aws_region=$AWS_REGION" -var="run_id=$RUN_ID" -var="certificate_arn=$certificate_arn" -var="expires_at=$EXPIRES_AT" \
   -out="$PLAN_PATH" > "$EVIDENCE_DIR/terraform-plan.log"
 TF_DATA_DIR="$TF_DATA_DIR" terraform -chdir="$FIXTURE_DIR" show -json "$PLAN_PATH" \
   > "$EVIDENCE_DIR/plan.json"
@@ -104,20 +104,25 @@ run_handshake() {
   local groups="$1"
   local output="$2"
   local expected_group="$3"
+  local raw_output
+  raw_output="$PRIVATE_DIR/$(basename "$output").raw"
   for _ in $(seq 1 30); do
     if docker run --rm "$OPENSSL_IMAGE" sh -ec "
       apk add --no-cache 'openssl=3.5.7-r0' >/dev/null
       printf 'GET / HTTP/1.0\\r\\nHost: quantumforge.invalid\\r\\n\\r\\n' |
         openssl s_client -connect '$dns_name:443' -servername quantumforge.invalid \
           -tls1_3 -groups '$groups' -brief
-    " > "$output" 2>&1; then
-      if grep -Eq "(Negotiated TLS1.3 group:|Peer Temp Key:) $expected_group([, ]|$)" "$output"; then
+    " > "$raw_output" 2>&1; then
+      if grep -Eq "(Negotiated TLS1.3 group:|Peer Temp Key:) $expected_group([, ]|$)" "$raw_output"; then
+        grep -E \
+          '^(Protocol version:|Ciphersuite:|Signature type:|Negotiated TLS1.3 group:|Peer Temp Key:)' \
+          "$raw_output" > "$output"
         return 0
       fi
     fi
     sleep 10
   done
-  cat "$output" >&2
+  echo "TLS handshake did not negotiate the required group" >&2
   return 1
 }
 
@@ -127,11 +132,9 @@ run_handshake "X25519" "$EVIDENCE_DIR/classical-handshake.log" "X25519"
 jq -n \
   --arg status "assessment_complete" \
   --arg timestamp "$(date -u +%FT%TZ)" \
-  --arg account_id "$actual_account_id" \
   --arg region "$AWS_REGION" \
-  --arg dns_name "$dns_name" \
   --arg ssl_policy "$ssl_policy" \
-  '{status:$status,timestamp:$timestamp,account_id:$account_id,region:$region,dns_name:$dns_name,ssl_policy:$ssl_policy,pq_group:"X25519MLKEM768",classical_fallback_group:"X25519"}' \
+  '{status:$status,timestamp:$timestamp,account_verified:true,region:$region,ssl_policy:$ssl_policy,pq_group:"X25519MLKEM768",classical_fallback_group:"X25519"}' \
   > "$EVIDENCE_DIR/assessment-status.json"
 
 echo "ALB hybrid PQ-TLS and classical fallback handshakes passed; cleanup will now run."

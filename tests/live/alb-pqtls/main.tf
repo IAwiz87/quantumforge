@@ -19,6 +19,10 @@ variable "run_id" {
   type = string
 }
 
+variable "expires_at" {
+  type = string
+}
+
 variable "certificate_arn" {
   type = string
 }
@@ -38,21 +42,18 @@ locals {
     environment = "integration-test"
     owner       = "security-engineering"
     test-run    = var.run_id
-    expires-at  = "automatic-cleanup"
+    expires-at  = var.expires_at
   }
 }
 
 resource "aws_vpc" "test" {
   #checkov:skip=CKV2_AWS_11:A short-lived handshake fixture has no workloads or application traffic; the test captures TLS evidence and destroys the VPC.
+  #checkov:skip=CKV2_AWS_12:The default security group is unused; mutating it would require broader untagged-resource IAM permissions.
   cidr_block           = "10.255.0.0/16"
   enable_dns_hostnames = true
   tags                 = merge(local.common_tags, { Name = "qf-pqtls-${local.short_id}" })
 }
 
-resource "aws_default_security_group" "test" {
-  vpc_id = aws_vpc.test.id
-  tags   = local.common_tags
-}
 
 resource "aws_internet_gateway" "test" {
   vpc_id = aws_vpc.test.id

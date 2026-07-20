@@ -1,7 +1,6 @@
 {
   "quantumforge_config": {
     "enforce_cutover": true,
-    "assessment_time": "2026-07-19T12:00:00Z",
     "exceptions": [
       {
         "id": "QF-EX-001",

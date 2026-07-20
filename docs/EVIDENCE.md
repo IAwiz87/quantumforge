@@ -15,14 +15,20 @@ Every collection run must use one of these explicit states:
 
 `scripts/run-census.sh` emits `collection_failed` before returning nonzero if its plan input is absent, malformed, or cannot be evaluated. `scripts/build-evidence.py` refuses to bundle `collection_failed` or `not_assessed` results.
 
+The pull-request workflow evaluates deterministic synthetic fixtures and marks them with `assessment_scope: synthetic_fixture`. Its artifact proves framework behavior, not the cryptographic posture of an AWS account. Environment assessments must run the census against a real collected plan, retain `assessment_scope: environment`, and satisfy the same schema and evidence checks.
+
 ## Bundle integrity
 
 `scripts/build-evidence.py INPUT_DIR OUTPUT_ZIP [offline|kms|alb]`:
 
 1. Requires every artifact for the selected evidence profile to exist and be non-empty.
 2. Rejects incomplete assessment states.
-3. Creates `manifest.json` with the commit, workflow identity, AWS account/region context, file sizes, and SHA-256 digest of each evidence object.
+3. Creates `manifest.json` with the commit, workflow identity, verified-account flag, region, file sizes, and SHA-256 digest of each evidence object.
 4. Produces a ZIP and a separate SHA-256 checksum.
+
+The offline profile includes the source plan, explicit assessment status, normalized inventory, census summary, schema-valid risk enrichment, risk assessment, Checkov, Trivy IaC, and Trivy secret reports, Conftest report, and non-empty CBOM. It requires inventory, summary, status, enrichment, and scored asset IDs/counts to agree, with no invalid scored assets. KMS and ALB profiles require successful runtime assertions plus semantic cleanup evidence (`PendingDeletion` with the seven-day KMS window, or complete ALB/certificate deletion).
+
+Live bundles deliberately omit Terraform plans/state, account IDs, resource ARNs, ALB endpoints, private keys, and connection strings. Environment-assessment inputs must pseudonymize those identifiers before bundling; synthetic fixtures may retain clearly fake placeholder IDs. The builder fails closed if an environment or required live-evidence file contains one of the forbidden identifier patterns. Raw provider logs remain only on the ephemeral runner and are not uploaded as failure artifacts.
 
 Trusted `main` and live workflows use `actions/attest-build-provenance` to create a keyless Sigstore-backed GitHub artifact attestation for each complete bundle. Pull-request jobs intentionally have no OIDC or attestation authority. Verify a downloaded bundle with:
 

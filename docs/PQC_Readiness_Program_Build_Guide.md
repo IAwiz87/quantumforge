@@ -12,7 +12,7 @@
 
 Three regulatory clocks are running simultaneously for any enterprise handling sensitive or regulated data:
 
-- **CNSA 2.0** (NSA Commercial National Security Algorithm Suite 2.0): no enforcement before December 31, 2025; all new National Security System acquisitions must be CNSA 2.0-compliant by January 1, 2027; non-supporting fielded equipment phased out by December 31, 2030; full cryptographic enforcement across NSS by December 31, 2031; full quantum-resistance across NSS by 2035 per NSM-10 ([SafeLogic](https://www.safelogic.com/compliance/cnsa-2)). A 2026 federal PQC executive order accelerates the civilian-agency timeline further, requiring high-value-asset and high-impact systems to migrate key establishment by December 31, 2030 and digital signatures by December 31, 2031 ([Center for Cybersecurity Policy](https://www.centerforcybersecuritypolicy.org/insights-and-research/from-strategy-to-implementation-the-white-house-accelerates-the-federal-transition-to-post-quantum-cryptography)).
+- **CNSA 2.0** (NSA Commercial National Security Algorithm Suite 2.0): no enforcement before December 31, 2025; all new National Security System acquisitions must be CNSA 2.0-compliant by January 1, 2027; non-supporting fielded equipment phased out by December 31, 2030; full cryptographic enforcement across NSS by December 31, 2031; full quantum-resistance across NSS by 2035 per NSM-10 ([SafeLogic](https://www.safelogic.com/compliance/cnsa-2)). A 2026 federal PQC executive order accelerates the civilian-agency timeline further, requiring high-value-asset and high-impact systems to migrate key establishment by December 31, 2030 and digital signatures by December 31, 2031 ([White House, Executive Order 14412](https://www.whitehouse.gov/presidential-actions/2026/06/securing-the-nation-against-advanced-cryptographic-attacks/)).
 - **NIST PQC algorithm standards**: FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), and FIPS 205 (SLH-DSA) were finalized August 2024 ([NIST](https://www.nist.gov/news-events/news/2024/08/nist-releases-first-3-finalized-post-quantum-encryption-standards); [CSRC FIPS 203](https://csrc.nist.gov/pubs/fips/203/final)). FIPS 206 (FN-DSA, Falcon-based) remains in draft as of this writing — track it, do not deploy it in production yet ([PostQuantum.com](https://postquantum.com/security-pqc/nist-third-round-pqc-signatures/); [DigiCert](https://www.digicert.com/blog/quantum-ready-fndsa-nears-draft-approval-from-nist)).
 - **FIPS 140-3 / CMVP validation lag**: as of early 2026 very few cryptographic modules have completed full CMVP validation with ML-KEM/ML-DSA support (AWS-LC is a notable exception — the first open-source crypto module with ML-KEM in an active FIPS 140-3 validation). Most vendors sit in the "Modules in Process" queue with 12+ month waits ([CIQ](https://ciq.com/blog/preparing-your-infrastructure-for-post-quantum-cryptography); [AWS](https://aws.amazon.com/security/post-quantum-cryptography/)). This validation gap is exactly why **hybrid classical+PQC architectures** (governed by NIST SP 800-227) are the practical near-term compliance posture.
 
@@ -54,16 +54,12 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.2"   # 6.2+ supports ML_DSA_44/65/87 on aws_kms_key
     }
-    azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "~> 3.100"
-    }
   }
   backend "s3" {
     bucket         = "your-org-tfstate"
     key            = "pqc-readiness/terraform.tfstate"
     region         = "us-east-1"
-    dynamodb_table = "terraform-locks"
+    use_lockfile    = true
     encrypt        = true
   }
 }
@@ -214,75 +210,50 @@ Every tool below is real, actively maintained, and mapped to the phase(s) where 
 
 ### Phase 1 — Discovery & Inventory: Automated Crypto-Census
 
-**Objective:** Build a complete, machine-readable inventory of every cryptographic algorithm, key, certificate, and protocol in the client's environment before any remediation is scoped.
+**Objective:** Build a machine-readable, coverage-tracked inventory of cryptographic algorithms, keys, certificates, protocols, libraries, applications, and data flows before remediation is scoped. No single collector should be described as complete.
 
 **Technical approach:** Cryptographic discovery has two complementary data sources, and a mature census pulls from both:
-1. **Infrastructure-as-code state** — every Terraform-managed resource (KMS keys, ACM/TLS certificates, HSM configurations, VPN tunnels, load-balancer listener policies) is already declared in state and plan JSON. `terraform show -json` on the current state file gives a complete, queryable snapshot without touching production systems.
-2. **Runtime/code artifacts** — CBOM generation (`cdxgen`, `cbomkit`) inspects source code, container images, and dependency manifests for cryptographic library usage that IaC alone won't reveal (application-level TLS libraries, embedded crypto in third-party dependencies, hardcoded algorithm choices).
+1. **Infrastructure-as-code plans** — Terraform plan JSON exposes supported managed resources without copying secrets from state. The current adapter covers representative AWS KMS, certificate, TLS, API Gateway, CloudFront, and VPN resources and preserves unsupported values as `unknown`.
+2. **Vendor-neutral adapters** — certificate stores, protocol scans, package/dependency analysis, application inventories, SaaS exports, and data-flow catalogs must be normalized into `schemas/crypto-inventory.schema.json`. `scripts/generate-cbom.py` records the repository's enforced cryptographic allowlists; it is not a substitute for runtime or source-code discovery.
 
-Both feeds are normalized into Rego facts and classified by a shared policy library tagging every discovered artifact by algorithm family (RSA/ECDSA/ECDH/DH classical-only vs. AES-symmetric vs. already-PQC-capable) and CNSA 2.0 category (NSS vs. non-NSS; key-establishment vs. digital-signature use).
+Collected records are normalized into the versioned inventory envelope and classified by shared policy. Coverage metadata and `unknown` values remain visible so missing collectors cannot be mistaken for a clean estate.
 
 **Setup steps:**
-1. Bootstrap the census repository:
+1. Initialize and validate the repository using the committed lockfile:
    ```bash
-   mkdir pqc-crypto-census && cd pqc-crypto-census
-   git init
-   mkdir -p policies/discovery policies/tests ingest .github/workflows
+   terraform init -backend=false -lockfile=readonly
+   terraform validate
    ```
-2. Extract IaC state to structured JSON for every managed environment:
+2. In an authorized environment, collect a Terraform plan rather than copying state:
    ```bash
-   terraform show -json > ingest/tfstate-$(date +%F).json
+   terraform plan -refresh=false -out=ingest/tfplan
+   terraform show -json ingest/tfplan > ingest/tfplan.json
    ```
-3. Write the Rego classification policy (`policies/discovery/classify.rego`):
-   ```rego
-   package discovery
-
-   classical_only_algorithms := {"RSA", "ECDSA", "ECDH", "DH", "DSA"}
-
-   classify(resource) := "classical_only" if {
-       resource.type == "aws_kms_key"
-       resource.values.customer_master_key_spec in classical_only_algorithms
-   }
-
-   classify(resource) := "pqc_ready" if {
-       resource.type == "aws_kms_key"
-       startswith(resource.values.key_spec, "ML_DSA")
-   }
-
-   classify(resource) := "symmetric" if {
-       resource.type == "aws_kms_key"
-       resource.values.key_usage == "ENCRYPT_DECRYPT"
-       resource.values.customer_master_key_spec == "SYMMETRIC_DEFAULT"
-   }
-
-   inventory[entry] {
-       some resource in input.resource_changes
-       entry := {
-           "address": resource.address,
-           "type": resource.type,
-           "classification": classify(resource.change.after),
-       }
-   }
+3. Run the tested classifier and emit a versioned inventory plus explicit assessment status:
+   ```bash
+   ./scripts/run-census.sh ingest/tfplan.json reports/census
+   check-jsonschema \
+     --schemafile schemas/crypto-inventory.schema.json \
+     reports/census/iac-inventory.json
    ```
-4. Unit-test the classifier before trusting it against real state:
+4. Run every Rego regression test before trusting the census or deployment gate:
    ```bash
    opa test -v policies/
    ```
-5. Run the classifier against the extracted state and pipe to a CBOM merge for the full inventory:
+5. Generate the repository policy CBOM and validate that it is non-empty:
    ```bash
-   opa eval -d policies/discovery -i ingest/tfstate-$(date +%F).json "data.discovery.inventory" > reports/iac-inventory.json
-   ./scripts/generate-cbom.py reports/iac.cdx.json
-   cdxgen -r -o reports/code.cdx.json ./src
-   cyclonedx-cli merge --input-files reports/iac.cdx.json reports/code.cdx.json --output-file reports/full-crypto-census.cdx.json
+   ./scripts/generate-cbom.py reports/quantumforge-policy.cdx.json
+   jq -e '.bomFormat == "CycloneDX" and (.components | length > 0)' \
+     reports/quantumforge-policy.cdx.json
    ```
-6. Wire steps 4–5 into a GitHub Actions job (`.github/workflows/pqc-compliance-gate.yml`) triggered on every pull request so newly introduced non-agile cryptography is caught at commit time, not audit time.
+6. Add separate, tested adapters for source dependencies, certificates, protocols, applications, SaaS, and data flows. Validate every adapter output against `schemas/crypto-inventory.schema.json` before merging it into an environment inventory. The pull-request fixture proves framework behavior only; it is not an environment assessment.
 
 **Client-ready deliverables:**
 
 | # | Deliverable | Standard Addressed |
 |---|---|---|
-| 1 | **Cryptographic Asset Inventory Report** — Terraform-state-derived, Rego-classified inventory of every KMS key, certificate, HSM config, and VPN tunnel by algorithm family | CNSA 2.0 scoping; FIPS 140-3 module boundary identification |
-| 2 | **Crypto Bill of Materials (CBOM)** — CycloneDX-CBOM JSON merged from IaC and source-code scans, regenerated on every pull request | Ongoing crypto-agility baseline |
+| 1 | **Cryptographic Asset Inventory Report** — schema-validated, adapter-derived inventory with explicit collector coverage and unknowns | CNSA 2.0 scoping; FIPS 140-3 module boundary identification |
+| 2 | **Crypto Bill of Materials (CBOM)** — CycloneDX JSON for enforced repository algorithms and policies, extended only when tested source/runtime adapters are available | Ongoing crypto-agility baseline |
 | 3 | **Algorithm Risk Register** — every discovered asset scored against CNSA 2.0 categories, FIPS 203/204/205 applicability, and Harvest-Now-Decrypt-Later (HNDL) exposure | CNSA 2.0; NIST SP 800-227 §4 deployment conditions |
 | 4 | **Executive Crypto-Census Briefing** — board-ready summary translating the inventory into "% of estate quantum-vulnerable" and "days to CNSA 2.0 milestone" language | Client governance reporting |
 
@@ -292,7 +263,7 @@ Both feeds are normalized into Rego facts and classified by a shared policy libr
 
 **Objective:** Convert the raw inventory into a prioritized, deadline-anchored remediation roadmap.
 
-**Technical approach:** Discovery-phase policies answer "what is it?" — Phase 2 policies answer "how urgently does it need to move?" The risk model combines HNDL exposure, data classification, and business impact. Migration deadline, remediation effort, and evidence confidence remain separate outputs. A difficult migration must never appear less risky merely because it is expensive. Missing metadata is invalid rather than receiving an optimistic default. Every scoring function is unit-tested with `opa test` before it is trusted for client-facing prioritization output.
+**Technical approach:** Discovery-phase policies answer "what is it?" — Phase 2 policies answer "how urgently does it need to move?" Enrich the same schema-valid canonical asset records with secrecy lifetime, data classification, impact, migration deadline, and remediation effort. The risk model combines HNDL exposure, data classification, and business impact. Migration deadline, remediation effort, and evidence confidence remain separate outputs. A difficult migration must never appear less risky merely because it is expensive. Missing metadata is invalid rather than receiving an optimistic default. Every scoring function is unit-tested with `opa test` before it is trusted for client-facing prioritization output.
 
 **Setup steps:**
 1. Extend the Phase 1 repo with a scoring module (`policies/scoring/risk_score.rego`):
@@ -315,24 +286,34 @@ Both feeds are normalized into Rego facts and classified by a shared policy libr
    impact_weight("operational") := 10
    impact_weight("informational") := 5
 
+   deadline_weight(months) := 20 if months <= 6
+   deadline_weight(months) := 10 if months > 6; months <= 18
+   deadline_weight(months) := 0 if months > 18
+
    inherent_risk_score(asset) := total if {
-       total := hndl_weight(asset.data_retention_years) +
+       total := hndl_weight(asset.secrecy_lifetime_years) +
                  classification_weight(asset.data_classification) +
                  impact_weight(asset.impact)
    }
 
-   tier(asset) := "critical" if score(asset) >= 80
-   tier(asset) := "high" if score(asset) >= 60; score(asset) < 80
-   tier(asset) := "medium" if score(asset) >= 35; score(asset) < 60
-   tier(asset) := "low" if score(asset) < 35
+   migration_urgency_score(asset) := min([100,
+       inherent_risk_score(asset) + deadline_weight(asset.migration_deadline_months)
+   ])
+
+   tier(asset) := "critical" if migration_urgency_score(asset) >= 80
+   tier(asset) := "high" if migration_urgency_score(asset) >= 60; migration_urgency_score(asset) < 80
+   tier(asset) := "medium" if migration_urgency_score(asset) >= 35; migration_urgency_score(asset) < 60
+   tier(asset) := "low" if migration_urgency_score(asset) < 35
    ```
 2. Write unit tests covering boundary conditions on every tier threshold before deployment:
    ```bash
    opa test -v policies/scoring/
    ```
-3. Feed the Phase 1 inventory JSON through the scoring policy to produce a tiered priority list:
+3. Add the schema-defined risk-enrichment fields to the Phase 1 assets, validate the enriched envelope, and produce a tiered priority list:
    ```bash
-   opa eval -d policies/scoring -i reports/iac-inventory.json "data.scoring.tier" > reports/priority-tiers.json
+   check-jsonschema --schemafile schemas/crypto-inventory.schema.json reports/risk-input.json
+   opa eval --format raw -d policies -i reports/risk-input.json \
+     "data.quantumforge.scoring.assessment" > reports/priority-tiers.json
    ```
 4. Cross-reference each asset's current CMVP module dependency against the [NIST CMVP Modules in Process list](https://csrc.nist.gov/projects/cryptographic-module-validation-program/modules-in-process/modules-in-process-list) to flag which remediation items are gated on a vendor's pending validation rather than the client's own engineering effort.
 
@@ -365,7 +346,7 @@ As of this writing, real hybrid-PQC capability exists concretely on AWS and shou
    resource "aws_kms_key" "pqc_signing" {
      description              = "ML-DSA post-quantum signing key"
      key_usage                = "SIGN_VERIFY"
-     customer_master_key_spec = "ML_DSA_65"   # NIST security level 3 (~192-bit classical equivalent)
+     customer_master_key_spec = "ML_DSA_65"   # FIPS 204 security category 3
      deletion_window_in_days  = 30
      enable_key_rotation      = false          # asymmetric keys cannot auto-rotate
    }
@@ -390,56 +371,38 @@ As of this writing, real hybrid-PQC capability exists concretely on AWS and shou
      }
    }
    ```
-3. Write the Conftest combiner-validation policy (`policies/hybrid/combiner.rego`):
-   ```rego
-   package hybrid
-
-   deny[msg] {
-       resource := input.resource_changes[_]
-       resource.type == "aws_lb_listener"
-       resource.change.after.protocol == "HTTPS"
-       not endswith(resource.change.after.ssl_policy, "PQ-2025-09")
-       msg := sprintf("listener %v is provisioning classical-only TLS after the crypto-agility cutover date", [resource.address])
-   }
-
-   deny[msg] {
-       resource := input.resource_changes[_]
-       resource.type == "aws_kms_key"
-       resource.change.after.key_usage == "SIGN_VERIFY"
-       not startswith(resource.change.after.customer_master_key_spec, "ML_DSA")
-       not startswith(resource.change.after.customer_master_key_spec, "ECC")   # transitional hybrid signing still allowed
-       msg := sprintf("KMS signing key %v uses a non-agile algorithm", [resource.address])
-   }
+3. Use the committed Conftest gate (`policies/hybrid/combiner.rego`). It exact-allowlists AWS ML-DSA parameter sets and versioned ALB PQ policies, rejects malformed plan input, and evaluates governed exception expiry against OPA's runtime clock:
+   ```bash
+   opa test -v policies/
+   conftest test tfplan.json --policy policies/
    ```
 4. Run the full plan-to-gate pipeline:
    ```bash
    terraform init
    terraform plan -out=tfplan
    terraform show -json tfplan > tfplan.json
-   conftest test tfplan.json -p policies/hybrid/
+   conftest test tfplan.json --policy policies/
    ```
-5. Build the algorithm test harness in WSL2 using `liboqs-python` to validate interoperability and measure handshake performance overhead before client sign-off:
-   ```python
-   import oqs, time
-
-   with oqs.KeyEncapsulation("ML-KEM-768") as kem:
-       public_key = kem.generate_keypair()
-       start = time.perf_counter()
-       ciphertext, shared_secret_enc = oqs.KeyEncapsulation("ML-KEM-768").encap_secret(public_key)
-       shared_secret_dec = kem.decap_secret(ciphertext)
-       elapsed_ms = (time.perf_counter() - start) * 1000
-       assert shared_secret_enc == shared_secret_dec
-       print(f"ML-KEM-768 encap/decap round-trip: {elapsed_ms:.3f} ms")
+5. In the isolated AWS sandbox, run the guarded KMS lifecycle to create `ML_DSA_65`, sign and verify through KMS, independently verify with OpenSSL, and require `PendingDeletion` cleanup evidence:
+   ```bash
+   QUANTUMFORGE_ALLOW_LIVE_AWS_TESTS=1 \
+   QUANTUMFORGE_EXPECTED_ACCOUNT_ID="$EXPECTED_SANDBOX_ACCOUNT" \
+   ./scripts/aws/kms-lifecycle-test.sh build/live-kms
    ```
-6. Validate the actually-provisioned infrastructure (not just the plan) with Terratest, confirming the ALB listener really negotiates a hybrid group end-to-end.
+6. Run the guarded ALB lifecycle and require real `X25519MLKEM768` plus classical `X25519` handshakes before cleanup can pass:
+   ```bash
+   QUANTUMFORGE_ALLOW_LIVE_AWS_TESTS=1 \
+   QUANTUMFORGE_EXPECTED_ACCOUNT_ID="$EXPECTED_SANDBOX_ACCOUNT" \
+   ./scripts/aws/alb-pqtls-lifecycle-test.sh build/live-alb
+   ```
 
 **Client-ready deliverables:**
 
 | # | Deliverable | Standard Addressed |
 |---|---|---|
-| 1 | **Hybrid-PQC Terraform Modules** — reference IaC provisioning ML-DSA KMS signing keys and PQ-TLS-policy load balancer listeners on AWS, with Azure readiness documented separately as a 2026 roadmap item | NIST SP 800-227 §4.6 (multi-algorithm KEMs, PQ/T hybrids); FIPS 203/204 |
-| 2 | **Conftest Crypto-Agility Gate** — CI policy gate blocking any plan introducing classical-only key establishment past a client-defined cutover date, verifying combiner constructions follow SP 800-56C/SP 800-133 approved methods | SP 800-227 §4.6 approved key combiners; CNSA 2.0 forward posture |
-| 3 | **Algorithm Test Harness** — sandbox validating FIPS 203/204/205 implementations against client performance/interoperability requirements, tracking FIPS 206 (FN-DSA) draft status without premature adoption | FIPS 203/204/205; FIPS 206 (monitoring only) |
+| 1 | **AWS PQC Terraform Modules** — pure FIPS 204 ML-DSA signing plus an ALB-only hybrid PQ-TLS listener, with their different cryptographic contracts explicit | FIPS 204; AWS hybrid PQ-TLS service policy |
+| 2 | **Conftest Crypto-Agility Gate** — exact service allowlists, malformed-input rejection, and owner-approved expiring exceptions for Terraform plans | CNSA 2.0 forward posture; crypto-agility governance |
+| 3 | **Live AWS Runtime Evidence Harness** — isolated KMS sign/verify and independent OpenSSL verification plus ALB hybrid/classical negotiation and cleanup evidence | FIPS 204 algorithm use; AWS service runtime behavior |
 | 4 | **Crypto-Agility Reference Architecture Document** — abstracted crypto-provider boundary design so future algorithm swaps require configuration changes, not re-architecture | Crypto-agility principle underlying CNSA 2.0 and NSM-10 |
 
 ---
@@ -448,11 +411,11 @@ As of this writing, real hybrid-PQC capability exists concretely on AWS and shou
 
 **Objective:** Operationalize PQC posture as a continuously evidenced, audit-ready control rather than a one-time project.
 
-**Technical approach:** Every prior phase produces artifacts (inventory JSON, risk scores, Terraform plans, policy test results) that are only valuable to an auditor if they're captured, timestamped, and retrievable on demand. This phase wires the entire toolchain into a single CI pipeline that runs on every merge to `main`, producing a signed evidence bundle mapped to control IDs, and layers OSCAL-formatted control mapping on top so the evidence speaks the same language as formal compliance frameworks (SP 800-53, SOC 2, etc.).
+**Technical approach:** Every prior phase produces artifacts (inventory JSON, risk scores, Terraform plans, policy test results) that are valuable to an auditor only when they are complete, timestamped, attributable, and retrievable. The credential-free gate validates every pull request, trusted pushes to `main` attest complete bundles, and a separate protected workflow performs live AWS tests. Optional S3 Object Lock publication provides the long-term immutable-retention interface; OSCAL mapping can then connect evidence to formal controls such as SP 800-53 and SOC 2.
 
 **Setup steps:**
 1. Use `.github/workflows/pqc-compliance-gate.yml` for pull requests and pushes. This workflow is deliberately credential-free, has only `contents: read`, checks out without persisting the GitHub token, and fails when Terraform, policy, scanner, schema, CBOM, or evidence generation fails.
-2. Keep AWS credentials out of pull-request execution. Run `.github/workflows/aws-live-pqc-validation.yml` only by manual dispatch from `main`, behind the protected `quantumforge-aws-sandbox` environment. Its jobs receive job-scoped `id-token: write` and use GitHub OIDC to assume a dedicated sandbox role.
+2. Keep AWS credentials out of pull-request execution. Run `.github/workflows/aws-live-pqc-validation.yml` only by manual dispatch from `main`, behind the protected `quantumforge-aws-sandbox` environment. Use the exact-subject, main-only `quantumforge-aws-sandbox-janitor` environment for post-job and hourly expired-fixture cleanup. These jobs receive job-scoped `id-token: write` and use GitHub OIDC to assume a dedicated sandbox role.
 3. Build evidence with `scripts/build-evidence.py`, attest the complete ZIP with GitHub artifact attestations, retain the ordinary workflow copy for only 30 days, and optionally publish the attested bundle with `scripts/publish-evidence-s3.sh` to a separately administered S3 Object Lock bucket. GitHub artifact retention alone is not a seven-year record system.
 4. Map evidence artifacts to formal controls with `compliance-trestle`, generating OSCAL assessment-results documents that reference the CI-produced evidence bundle by commit SHA:
    ```bash
@@ -461,17 +424,17 @@ As of this writing, real hybrid-PQC capability exists concretely on AWS and shou
    # populate implemented-requirements referencing SC-12 (key management) and SC-13 (cryptographic protection)
    trestle validate -f pqc-readiness-profile/profile.json
    ```
-5. Use `.github/workflows/cmvp-monitor.yml` to validate the repository's pinned watchlist and retrieve a checksummed copy of NIST's Modules in Process PDF every week. It does not claim to parse status changes or open issues until a tested collector is added.
+5. Use `.github/workflows/cmvp-reference-capture.yml` to validate the repository's pinned watchlist and retrieve a checksummed copy of NIST's Modules in Process PDF every week. It does not claim to parse status changes or open issues until a tested collector is added.
 6. Feed accumulated evidence bundles into Heimdall2 for a rolling compliance dashboard the client's GRC/security team can review without opening individual JSON artifacts.
 
 **Client-ready deliverables:**
 
 | # | Deliverable | Standard Addressed |
 |---|---|---|
-| 1 | **PQC Compliance Gate** — CI workflow producing plan JSON, Trivy/Checkov static scans, Rego/Conftest crypto-agility results, and a signed evidence bundle on every merge | Continuous CNSA 2.0 / FIPS 140-3 evidence generation |
+| 1 | **PQC Framework Validation Gate** — credential-free module mocks, static scans, policy fixtures, normalized synthetic inventory, and an attested validation bundle on trusted `main` pushes; not an environment posture assessment | Continuous control-software verification |
 | 2 | **OSCAL-Mapped Evidence Registry** — evidence bundles mapped via compliance-trestle to SP 800-53 control IDs (SC-12 key management, SC-13 cryptographic protection), consumable by any OSCAL-compatible GRC platform | SP 800-53 SC-12/SC-13; CNSA 2.0 audit trail |
-| 3 | **Continuous CMVP Status Monitor** — scheduled CI job checking the CMVP "Modules in Process" list for dependent cryptographic libraries, auto-flagging when a validated ML-KEM/ML-DSA module becomes available | FIPS 140-3 / CMVP validation lifecycle |
-| 4 | **Quarterly PQC Compliance Attestation Report** — audit-grade report bundling evidence against the CNSA 2.0 deadline countdown and current CMVP validation status, suitable for board, regulator, or customer due-diligence | CNSA 2.0; FIPS 140-3; client contractual assurance |
+| 3 | **CMVP Reference Capture** — scheduled retrieval and checksum of NIST's Modules in Process PDF plus watchlist schema validation; deterministic status comparison remains roadmap work | CMVP reference provenance |
+| 4 | **Quarterly PQC Compliance Attestation Report** — a planned report built only from real environment assessments, current CMVP analysis, trusted attestations, and immutable records | CNSA 2.0; FIPS 140-3; client contractual assurance |
 
 ---
 
@@ -499,12 +462,12 @@ Follow this sequence exactly on a fresh workstation/repo to stand up the entire 
        ├── pqc-compliance-gate.yml
        └── aws-live-pqc-validation.yml
    ```
-3. **Phase 1 — stand up discovery:** write and unit-test the classification policy, extract `terraform show -json` from every managed environment, run the CBOM generation, wire the `pqc-compliance-gate.yml` PR workflow. Confirm you can produce a full Cryptographic Asset Inventory Report on demand.
+3. **Phase 1 — stand up discovery:** validate the Terraform plan adapter, add schema-validated collectors for each authorized source, generate the policy CBOM, and record explicit coverage gaps. Confirm the report never equates unsupported sources with no assets.
 4. **Phase 2 — layer in scoring:** write and unit-test the risk-scoring policy, run it against the Phase 1 inventory, cross-reference CMVP status, and produce the first Priority Matrix.
 5. **Phase 3 — provision and validate PQC infrastructure:** author the pure ML-DSA `pqc-kms-signing` module and the hybrid key-establishment `hybrid-pqc-alb` module, test Terraform contracts with native mock providers, and run the isolated AWS lifecycle scripts to prove KMS sign/verify plus real ALB PQ-capable and classical-fallback TLS negotiation.
-6. **Phase 4 — close the loop with continuous evidence:** deploy `pqc-compliance-gate.yml`, confirm it produces a complete evidence ZIP on a test PR, map evidence to OSCAL controls with `compliance-trestle`, and stand up the scheduled CMVP monitor job.
-7. **First full end-to-end run:** open a PR that modifies a Terraform module, and confirm all four phases fire correctly in sequence — discovery re-classifies the change, scoring re-prioritizes if needed, the crypto-agility gate blocks or allows the plan, and the evidence bundle is produced and archived — before merging to `main`.
-8. **Ongoing operation:** every subsequent PR runs the same pipeline automatically; the quarterly attestation report and CMVP monitor run on schedule without further manual intervention.
+6. **Phase 4 — close the loop with continuous evidence:** deploy `pqc-compliance-gate.yml`, confirm it produces a synthetic-scope framework-validation ZIP on a test PR, and verify that a trusted `main` push attests the exact ZIP. Configure immutable S3 retention separately when required.
+7. **First environment assessment:** collect an authorized Terraform plan, run `scripts/run-census.sh` with environment scope, validate the normalized inventory, run policy/scanner checks, and preserve the resulting evidence. Do not substitute the PR fixture for this assessment.
+8. **Ongoing operation:** every PR revalidates framework behavior. Environment collectors, quarterly reports, and CMVP status comparison require separately scheduled, tested operational processes as those adapters are implemented.
 
 ---
 
@@ -517,7 +480,7 @@ Follow this sequence exactly on a fresh workstation/repo to stand up the entire 
 - DigiCert, [Quantum-Ready FN-DSA (FIPS 206) Nears Draft Approval from NIST](https://www.digicert.com/blog/quantum-ready-fndsa-nears-draft-approval-from-nist)
 - NSA, [Announcing the Commercial National Security Algorithm Suite 2.0](https://media.defense.gov/2025/May/30/2003728741/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS.PDF)
 - SafeLogic, [CNSA 2.0 Compliance Requirements, Algorithms & Timelines](https://www.safelogic.com/compliance/cnsa-2)
-- Center for Cybersecurity Policy, [From Strategy to Implementation: The White House Accelerates the Federal Transition to Post-Quantum Cryptography](https://www.centerforcybersecuritypolicy.org/insights-and-research/from-strategy-to-implementation-the-white-house-accelerates-the-federal-transition-to-post-quantum-cryptography)
+- White House, [Executive Order 14412 — Securing the Nation Against Advanced Cryptographic Attacks](https://www.whitehouse.gov/presidential-actions/2026/06/securing-the-nation-against-advanced-cryptographic-attacks/), June 22, 2026
 - CIQ, [Preparing Your Infrastructure for Post-Quantum Cryptography](https://ciq.com/blog/preparing-your-infrastructure-for-post-quantum-cryptography) — CMVP validation-lag evidence
 - AWS, [Post-Quantum Cryptography at AWS](https://aws.amazon.com/security/post-quantum-cryptography/)
 - AWS Security Blog, [How to Create Post-Quantum Signatures Using AWS KMS and ML-DSA](https://aws.amazon.com/blogs/security/how-to-create-post-quantum-signatures-using-aws-kms-and-ml-dsa/), June 13, 2025

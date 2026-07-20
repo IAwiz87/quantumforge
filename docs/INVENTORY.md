@@ -35,6 +35,19 @@ check-jsonschema \
 
 Exact, versioned allowlists classify known AWS ML-DSA specs and recommended hybrid PQ-TLS policies. Provider-managed or incomplete data is classified `unknown`, not clean.
 
+Run and validate the adapter with:
+
+```bash
+./scripts/run-census.sh tfplan.json reports/census
+check-jsonschema \
+  --schemafile schemas/crypto-inventory.schema.json \
+  reports/census/iac-inventory.json
+```
+
+The adapter emits the canonical `{schema_version, assets}` envelope, normalizes KMS `SIGN_VERIFY` to `signing`, carries Terraform tags into metadata, and records one observation timestamp for the full census. Missing owner or environment tags remain explicit as `unassigned` or `unknown`; downstream enrichment should resolve them rather than silently dropping the assets.
+
+Risk enrichment remains inside the same schema through optional `secrecy_lifetime_years`, `data_classification`, `impact`, `migration_deadline_months`, and `remediation_effort` fields. `examples/inventory/scoring-ready-inventory.json` demonstrates a canonical asset that can be validated and scored without a lossy transform.
+
 ## Next adapters
 
 Prioritize discovery over new deployment modules:

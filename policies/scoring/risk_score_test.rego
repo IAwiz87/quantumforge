@@ -3,8 +3,17 @@ package quantumforge.scoring
 import rego.v1
 
 base_asset := {
-	"address": "aws_kms_key.example",
-	"data_retention_years": 10,
+	"asset_id": "aws_kms_key.example",
+	"provider": "aws",
+	"resource_type": "aws_kms_key",
+	"crypto_function": "signing",
+	"algorithm": "RSA_2048",
+	"classification": "classical_only",
+	"owner": "security-engineering",
+	"environment": "production",
+	"source": "terraform_plan",
+	"observed_at": "2026-07-20T00:00:00Z",
+	"secrecy_lifetime_years": 10,
 	"data_classification": "nss",
 	"impact": "mission_critical",
 	"migration_deadline_months": 6,
@@ -33,7 +42,7 @@ test_max_inherent_risk_and_urgency_cap if {
 
 test_low_risk_case if {
 	asset := object.union(base_asset, {
-		"data_retention_years": 2,
+		"secrecy_lifetime_years": 2,
 		"data_classification": "public",
 		"impact": "informational",
 		"migration_deadline_months": 24,
@@ -65,7 +74,7 @@ test_missing_metadata_is_invalid if {
 
 test_negative_values_are_invalid if {
 	invalid := object.union(base_asset, {
-		"data_retention_years": -1,
+		"secrecy_lifetime_years": -1,
 		"migration_deadline_months": -1,
 	})
 	count(metadata_errors(invalid)) == 2
@@ -74,8 +83,8 @@ test_negative_values_are_invalid if {
 sample_input := {"assets": [
 	base_asset,
 	object.union(base_asset, {
-		"address": "aws_kms_key.business",
-		"data_retention_years": 5,
+		"asset_id": "aws_kms_key.business",
+		"secrecy_lifetime_years": 5,
 		"data_classification": "regulated",
 		"impact": "business_critical",
 		"migration_deadline_months": 12,
@@ -83,8 +92,8 @@ sample_input := {"assets": [
 		"evidence_confidence": "medium",
 	}),
 	{
-		"address": "unknown.asset",
-		"data_retention_years": 2,
+		"asset_id": "unknown.asset",
+		"secrecy_lifetime_years": 2,
 	},
 ]}
 
@@ -95,5 +104,5 @@ test_batch_assessment_separates_invalid_assets if {
 	result.priority_matrix.critical == ["aws_kms_key.example"]
 	result.priority_matrix.high == ["aws_kms_key.business"]
 	some invalid in result.invalid_inventory
-	invalid.address == "unknown.asset"
+	invalid.asset_id == "unknown.asset"
 }
