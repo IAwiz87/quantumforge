@@ -2,63 +2,25 @@ package quantumforge.discovery
 
 import rego.v1
 
-# --- classify_kms_key unit tests -----------------------------------------
-
-test_kms_classic_rsa_is_classical_only if {
-	classify_kms_key({"customer_master_key_spec": "RSA_2048"}) == "classical_only"
-}
-
-test_kms_classic_ecc_is_classical_only if {
-	classify_kms_key({"customer_master_key_spec": "ECC_NIST_P384"}) == "classical_only"
-}
-
-test_kms_ml_dsa_is_post_quantum if {
-	classify_kms_key({"customer_master_key_spec": "ML_DSA_65"}) == "post_quantum"
-}
-
-test_kms_ml_kem_is_post_quantum if {
-	classify_kms_key({"customer_master_key_spec": "ML_KEM_768"}) == "post_quantum"
-}
-
-test_kms_symmetric_default_is_symmetric if {
-	classify_kms_key({"customer_master_key_spec": "SYMMETRIC_DEFAULT"}) == "symmetric"
-}
-
-test_kms_unrecognized_spec_is_unknown if {
-	classify_kms_key({"customer_master_key_spec": "SM2"}) == "unknown"
-}
-
-# --- classify_tls_listener unit tests ------------------------------------
-
-test_https_listener_with_pq_policy_is_hybrid if {
-	classify_tls_listener({
-		"protocol": "HTTPS",
-		"ssl_policy": "ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09",
-	}) == "hybrid_post_quantum"
-}
-
-test_https_listener_without_pq_policy_is_classical_only if {
-	classify_tls_listener({
-		"protocol": "HTTPS",
-		"ssl_policy": "ELBSecurityPolicy-TLS13-1-2-2021-06",
-	}) == "classical_only"
-}
-
-# --- inventory + summary integration tests --------------------------------
-
 sample_plan := {"resource_changes": [
 	{
-		"address": "module.hybrid_pqc_kms.aws_kms_key.pqc_signing",
+		"address": "module.pqc_kms_signing.aws_kms_key.pqc_signing",
 		"type": "aws_kms_key",
-		"change": {"after": {"customer_master_key_spec": "ML_DSA_65"}},
+		"change": {"after": {
+			"customer_master_key_spec": "ML_DSA_65",
+			"key_usage": "SIGN_VERIFY",
+		}},
 	},
 	{
-		"address": "aws_kms_key.legacy_rsa",
+		"address": "aws_kms_key.legacy",
 		"type": "aws_kms_key",
-		"change": {"after": {"customer_master_key_spec": "RSA_2048"}},
+		"change": {"after": {
+			"customer_master_key_spec": "RSA_3072",
+			"key_usage": "SIGN_VERIFY",
+		}},
 	},
 	{
-		"address": "module.hybrid_pqc_alb.aws_lb_listener.hybrid_pqc_https",
+		"address": "aws_lb_listener.hybrid",
 		"type": "aws_lb_listener",
 		"change": {"after": {
 			"protocol": "HTTPS",
@@ -66,22 +28,96 @@ sample_plan := {"resource_changes": [
 		}},
 	},
 	{
-		"address": "aws_lb_listener.legacy_https",
-		"type": "aws_lb_listener",
+		"address": "aws_acm_certificate.public",
+		"type": "aws_acm_certificate",
+		"change": {"after": {"key_algorithm": "RSA_2048"}},
+	},
+	{
+		"address": "aws_acmpca_certificate_authority.internal",
+		"type": "aws_acmpca_certificate_authority",
+		"change": {"after": {"key_algorithm": "EC_prime256v1"}},
+	},
+	{
+		"address": "aws_cloudfront_distribution.web",
+		"type": "aws_cloudfront_distribution",
 		"change": {"after": {
-			"protocol": "HTTPS",
-			"ssl_policy": "ELBSecurityPolicy-2016-08",
+			"viewer_certificate": [{"minimum_protocol_version": "TLSv1.2_2021"}],
 		}},
+	},
+	{
+		"address": "aws_apigatewayv2_domain_name.api",
+		"type": "aws_apigatewayv2_domain_name",
+		"change": {"after": {
+			"domain_name_configuration": [{"security_policy": "TLS_1_2"}],
+		}},
+	},
+	{
+		"address": "aws_vpn_connection.partner",
+		"type": "aws_vpn_connection",
+		"change": {"after": {"type": "ipsec.1"}},
+	},
+	{
+		"address": "aws_kms_key.deleted",
+		"type": "aws_kms_key",
+		"change": {"after": null},
 	},
 ]}
 
-test_inventory_has_four_entries if {
-	count(inventory) == 4 with input as sample_plan
+test_exact_key_classification if {
+	classify_key_spec("ML_DSA_65") == "post_quantum"
+	classify_key_spec("ML_DSA_EVIL") == "unknown"
+	classify_key_spec("RSA_3072") == "classical_only"
+	classify_key_spec("SYMMETRIC_DEFAULT") == "symmetric"
 }
 
-test_summary_counts_are_correct if {
-	s := summary with input as sample_plan
-	s.total_assets == 4
-	s.post_quantum_ready == 2
-	s.classical_only == 2
+test_exact_tls_policy_classification if {
+	classify_tls_policy("ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09") == "hybrid_post_quantum"
+	classify_tls_policy("ELBSecurityPolicy-PQ-EVIL") == "classical_only"
+}
+
+test_inventory_covers_representative_crypto_surfaces if {
+	result := inventory with input as sample_plan
+	count(result) == 8
+	{e.resource_type | some e in result} == {
+		"aws_kms_key",
+		"aws_lb_listener",
+		"aws_acm_certificate",
+		"aws_acmpca_certificate_authority",
+		"aws_cloudfront_distribution",
+		"aws_apigatewayv2_domain_name",
+		"aws_vpn_connection",
+	}
+}
+
+test_deleted_resources_are_not_reported_as_active_assets if {
+	result := inventory with input as sample_plan
+	not "aws_kms_key.deleted" in {e.address | some e in result}
+}
+
+test_normalized_inventory_has_vendor_neutral_fields if {
+	input_with_time := object.union(sample_plan, {
+		"_quantumforge": {"observed_at": "2026-07-19T12:00:00Z"},
+	})
+	result := normalized_inventory with input as input_with_time
+	result.schema_version == "1.0.0"
+	count(result.assets) == 8
+	every asset in result.assets {
+		nonempty(asset.asset_id)
+		nonempty(asset.owner)
+		nonempty(asset.environment)
+		asset.observed_at == "2026-07-19T12:00:00Z"
+		asset.evidence_confidence in {"high", "low"}
+	}
+	some asset in result.assets
+	asset.resource_type == "aws_kms_key"
+	asset.crypto_function == "signing"
+}
+
+test_summary_preserves_unknown_as_first_class if {
+	result := summary with input as sample_plan
+	result.total_assets == 8
+	result.post_quantum_ready == 2
+	result.classical_only == 3
+	result.symmetric == 0
+	result.unknown == 3
 }

@@ -1,188 +1,164 @@
 ![QuantumForge banner](docs/banner.png)
 
+# QuantumForge
 
-**QuantumForge** is a working, policy-as-code post-quantum cryptography readiness program (the QuantumForge PQC GRC Framework): Terraform modules for hybrid-PQC AWS infrastructure, Rego/OPA policies for crypto discovery, risk scoring, and compliance gating, and GitHub Actions pipelines that turn all of it into continuously generated audit evidence.
+QuantumForge is a policy-as-code post-quantum cryptography (PQC) readiness framework. It combines Terraform reference modules, Rego policies, credential-free tests, isolated AWS runtime tests, and evidence controls.
 
-This repo implements the four-phase QuantumForge program end to end:
+It intentionally distinguishes:
 
+- **pure post-quantum signing:** AWS Key Management Service (KMS) ML-DSA, standardized by NIST FIPS 204
+- **hybrid key establishment:** AWS Elastic Load Balancing (ELB) policies that negotiate classical plus ML-KEM groups while retaining classical client compatibility
+- **measurement from remediation:** the vendor-neutral inventory is the system of record; cloud modules are integrations and reference implementations, not the inventory definition
 
-| Phase | What lives here |
+## What is implemented
+
+| Area | Implementation |
 |---|---|
-| 1. Discovery & Inventory | [`policies/discovery/`](policies/discovery/) — Rego classifier for crypto assets in Terraform plan/state JSON |
-| 2. Vulnerability Prioritization | [`policies/scoring/`](policies/scoring/) — Rego risk-scoring engine (HNDL exposure × data classification × remediation cost) |
-| 3. Cryptographic Agility Architecture | [`modules/hybrid-pqc-kms/`](modules/hybrid-pqc-kms/), [`modules/hybrid-pqc-alb/`](modules/hybrid-pqc-alb/), [`policies/hybrid/`](policies/hybrid/) — hybrid-PQC Terraform modules + Conftest crypto-agility gate |
-| 4. Continuous Compliance | [`.github/workflows/`](.github/workflows/) — CI pipelines producing signed evidence bundles and a CMVP status monitor |
-
-Every module, policy, and workflow in this repo has been validated (`terraform validate`, `opa test`, `conftest test` — see [Validation status](#validation-status) below) before being committed.
-
-
----
+| Inventory | AWS Terraform-plan discovery plus a versioned vendor-neutral schema for AWS, Azure, GCP, on-prem, SaaS, and application assets |
+| Risk | Separate inherent risk, migration urgency, remediation effort, and evidence confidence |
+| Governance | Owned, approved, expiring exceptions that fail closed when invalid |
+| KMS | Pure `ML_DSA_44`, `ML_DSA_65`, or `ML_DSA_87` signing key module |
+| TLS | Application Load Balancer HTTPS listener with an exact allowlist of recommended AWS hybrid PQ-TLS policies |
+| Offline tests | Terraform native mock-provider tests, Open Policy Agent (OPA) tests, Conftest policy tests, schema validation, infrastructure-as-code (IaC) scans, and Cryptographic Bill of Materials (CBOM) generation |
+| Live tests | AWS KMS sign/verify plus independent OpenSSL verification; ALB `X25519MLKEM768` and classical `X25519` runtime handshakes |
+| Evidence | Explicit assessment states, SHA-256 manifests, GitHub artifact attestations, and optional seven-year S3 Object Lock publishing |
 
 ## Repository layout
 
-```
-quantumforge/
-├── main.tf                      # root module wiring both hybrid-PQC modules
-├── variables.tf, outputs.tf, versions.tf
-├── modules/
-│   ├── hybrid-pqc-kms/           # AWS KMS ML-DSA (FIPS 204) signing key module
-│   └── hybrid-pqc-alb/           # AWS ALB/NLB hybrid post-quantum TLS listener module
-├── policies/
-│   ├── discovery/                # Phase 1 — crypto asset classifier + unit tests
-│   ├── scoring/                  # Phase 2 — risk scoring engine + unit tests
-│   └── hybrid/                   # Phase 3/4 — crypto-agility Conftest gate + unit tests
-├── examples/sandbox/             # Mock Terraform plan JSON fixtures for exercising the gate without a live AWS account
-├── watchlist/cmvp-watchlist.json # Phase 4 — libraries tracked against the NIST CMVP Modules in Process list
-├── .github/workflows/
-│   ├── census.yml                 # Phase 1 — PR-triggered crypto census + CBOM generation
-│   ├── pqc-compliance-gate.yml    # Phase 3/4 — policy tests, Trivy/Checkov scans, Conftest gate, evidence bundle
-│   └── cmvp-monitor.yml           # Phase 4 — scheduled CMVP status check
-├── ingest/, reports/, evidence/   # CI output directories (gitignored, kept with .gitkeep)
+```text
+modules/
+  pqc-kms-signing/          Pure FIPS 204 ML-DSA signing
+  hybrid-pqc-alb/           ALB HTTPS hybrid PQ-TLS listener
+policies/
+  discovery/                Terraform-plan cryptographic discovery
+  inventory/                Vendor-neutral inventory checks and metrics
+  scoring/                  Risk, urgency, effort, and confidence
+  governance/               Exception validation
+  hybrid/                   Deployment rules executed by Conftest
+schemas/                    Versioned inventory schema
+examples/                   Generated plan, inventory, and governance test inputs
+tests/live/                 Temporary AWS KMS and ALB test resources
+scripts/aws/                Guarded runtime lifecycle tests
+.github/workflows/          Credential-free PR CI and manual OpenID Connect (OIDC) live tests
 ```
 
----
+## Terms used in this repository
+
+- **Test fixture:** generated test input or temporary cloud resource created only for validation.
+- **Fail closed:** missing, malformed, or contradictory data stops the assessment instead of being treated as compliant or empty.
+- **Inventory collection:** conversion of a Terraform plan into the canonical cryptographic inventory. Some script and directory names retain the earlier term `census`.
+- **Evidence profile:** the required set of files for one validation mode: offline policy checks, live KMS signing, or live ALB TLS negotiation.
+- **Provenance attestation:** a signed statement linking an evidence bundle to the GitHub workflow and commit that created it.
+- **Protected GitHub environment:** branch, approval, and variable restrictions applied before a sensitive workflow job can run.
+- **Cleanup safety net:** the hourly workflow that removes expired tagged AWS test resources if normal test cleanup cannot run. Its filename and protected environment retain the legacy internal name `janitor`.
 
 ## Prerequisites
 
-Install locally before working with this repo (full detailed setup steps are in the companion PQC Readiness Program Build Guide document shared alongside this repo):
+- Terraform >= 1.8
+- OPA and Conftest
+- Python 3.11+
+- `jq`
+- Docker for the pinned OpenSSL 3.5.7 runtime image
+- AWS CLI v2 only for manually authorized live tests
 
-- [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.8.0
-- [OPA](https://www.openpolicyagent.org/docs/latest/#running-opa) (`opa`)
-- [Conftest](https://www.conftest.dev/install/) (`conftest`)
-- AWS CLI v2, configured with credentials that can manage KMS and ELBv2 resources
-- (Optional, for CBOM generation) Node.js + `npm install -g @cyclonedx/cdxgen`
-- (Optional, for the full PQC test harness described in the build guide) WSL2/Linux with `liboqs` + `liboqs-python`
+## Credential-free development
 
----
-
-## Quick start
+Both deployable root modules are disabled by default, so local validation and pull-request CI do not contact AWS.
 
 ```bash
-git clone <this-repo-url>
-cd quantumforge
-
-# 1. Unit-test every policy before trusting it
-opa test -v policies/discovery/ policies/scoring/ policies/hybrid/
-
-# 2. Validate the Terraform
-terraform init
+terraform init -backend=false -lockfile=readonly
+terraform fmt -check -recursive
 terraform validate
+terraform test
 
-# 3. Plan against your own AWS account (requires real credentials)
-terraform plan -out=tfplan
-terraform show -json tfplan > plan.json
+terraform -chdir=modules/pqc-kms-signing init -backend=false -lockfile=readonly
+terraform -chdir=modules/pqc-kms-signing test
 
-# 4. Run the crypto-agility gate against your plan
-conftest test plan.json -p policies/hybrid/
+terraform -chdir=modules/hybrid-pqc-alb init -backend=false -lockfile=readonly
+terraform -chdir=modules/hybrid-pqc-alb test
+
+opa test -v policies
 ```
 
-By default `enable_hybrid_pqc_kms = true` and `enable_hybrid_pqc_alb = false` (the ALB module needs an existing load balancer/target group/certificate — see `variables.tf`). Flip `enable_hybrid_pqc_alb` to `true` and supply `existing_load_balancer_arn`, `existing_target_group_arn`, and `existing_acm_certificate_arn` to provision the hybrid-PQC listener too.
-
-### Exercising the gate without AWS credentials
-
-`examples/sandbox/` contains two hand-built plan-JSON fixtures so you can see the gate work without touching a real AWS account:
+Exercise the Conftest gate without credentials:
 
 ```bash
-# Should FAIL — classical-only RSA signing key + classical TLS policy
-conftest test examples/sandbox/mock-plan-classical-fail.json -p policies/hybrid/
+# Expected pass
+conftest test examples/sandbox/mock-plan-hybrid-pass.json --policy policies
 
-# Should PASS — ML-DSA signing key + hybrid post-quantum TLS policy
-conftest test examples/sandbox/mock-plan-hybrid-pass.json -p policies/hybrid/
+# Expected denial: classical KMS signing and classical TLS
+conftest test examples/sandbox/mock-plan-classical-fail.json --policy policies
 ```
 
----
+The gate uses exact key-spec and security-policy allowlists. A value that merely contains `ML_DSA` or `PQ` does not pass.
 
-## Module reference
+## Terraform modules
 
-### `modules/hybrid-pqc-kms`
+### `modules/pqc-kms-signing`
 
-Provisions an `aws_kms_key` with `key_usage = "SIGN_VERIFY"` and a post-quantum `customer_master_key_spec` (`ML_DSA_44` / `ML_DSA_65` / `ML_DSA_87` — enforced by a variable validation block). Keys are generated and protected inside FIPS 140-3 Security Level 3 validated HSMs by AWS KMS. Signing uses the `ML_DSA_SHAKE_256` algorithm (see the `signing_algorithm` output).
+Creates an AWS KMS asymmetric `SIGN_VERIFY` key and alias using FIPS 204 ML-DSA. The module is **not** a hybrid classical-plus-PQC signature construction. Automatic KMS rotation is unavailable for asymmetric keys, so rotation requires a new key and controlled application migration.
 
-Asymmetric keys, including ML-DSA keys, do not support AWS-managed automatic rotation — `enable_key_rotation` is hardcoded `false` and key rotation must be handled operationally (provision a new key, dual-sign/verify during transition, retire the old key via the `deletion_window_in_days` grace period).
+AWS Provider 6.2 or later is required because ML-DSA support is unavailable in the repository's former 5.x constraint. Lockfiles make the tested provider selection reproducible.
 
 ### `modules/hybrid-pqc-alb`
 
-Provisions an `aws_lb_listener` on port 443 using AWS's hybrid post-quantum TLS security policy (`ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09` by default), which negotiates `X25519MLKEM768`, `SecP256r1MLKEM768`, or `SecP384r1MLKEM1024` hybrid key exchange with PQ-capable clients and falls back to classical TLS 1.2/1.3 for clients that don't yet support ML-KEM. A variable validation block requires any `ssl_policy` override to still contain `PQ` — this module exists specifically to enforce PQ-capable listeners; use a plain `aws_lb_listener` resource directly if you need a classical-only listener for some other purpose.
+Creates an **Application Load Balancer** `HTTPS` listener. It does not create a Network Load Balancer listener. NLB listeners use `protocol = "TLS"` and should be implemented and tested through a separate module contract.
 
-**Azure note:** Azure Key Vault / Managed HSM PQC support is still tracking through 2026 and is not yet available for direct Terraform provisioning as of this writing. There is intentionally no `hybrid-pqc-azure` module yet — track Azure readiness as a roadmap item rather than building against an unstable/unavailable API surface.
+The default policy is `ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09`. Overrides must match the exact recommended PQ policy allowlist in `variables.tf`.
 
----
+## Inventory and policy
 
-## Policy reference
+Terraform discovery currently covers KMS, ELB listeners, AWS Certificate Manager (ACM) certificates, ACM Private Certificate Authority, CloudFront, API Gateway custom domains, and Site-to-Site VPN connections. Provider-managed or incomplete algorithm data stays `unknown`.
 
-### `policies/discovery` (package `quantumforge.discovery`)
+The canonical cross-platform model is [`schemas/crypto-inventory.schema.json`](schemas/crypto-inventory.schema.json). See [Inventory](docs/INVENTORY.md), [Governance](docs/GOVERNANCE.md), and the [Roadmap](ROADMAP.md).
 
-Classifies `aws_kms_key` and `aws_lb_listener` resources found in a Terraform plan/state JSON document into `post_quantum` / `classical_only` / `symmetric` / `unknown` (KMS) or `hybrid_post_quantum` / `classical_only` (TLS listeners). Exposes an `inventory` (partial set of classified assets) and a `summary` (roll-up counts) rule — the latter is what the Phase 1 Executive Crypto-Census Briefing is built from.
+## CI and live AWS validation
 
-### `policies/scoring` (package `quantumforge.scoring`)
+`pqc-compliance-gate.yml` is credential-free and safe for pull requests. It fails on Terraform, OPA, Conftest, schema, Checkov, Trivy, CBOM, or evidence-generation errors. Its normalized inventory uses `assessment_scope: synthetic_fixture`, meaning it was generated from test data. It proves framework behavior and never represents an AWS environment assessment.
 
-Takes enriched asset metadata (`data_retention_years`, `data_classification`, `remediation_cost`) and produces a weighted `score` (0–100) and `tier` (`critical`/`high`/`medium`/`low`). `priority_matrix` buckets a full batch of assets by tier — this is the Phase 2 PQC Migration Priority Matrix.
+`aws-live-pqc-validation.yml` is manually triggered in a protected GitHub environment and authenticates through OIDC. It requires a dedicated sandbox account, an account-ID guard, a concurrency lock, timeouts, tagged resources, in-process cleanup, a post-job cleanup check, and the hourly cleanup safety net for expired test resources. The ALB job is optional because it creates a paid resource.
 
-### `policies/hybrid` (package `main`, for use with `conftest`)
+See [Live AWS validation](docs/AWS_LIVE_TESTS.md).
 
-The Phase 3/4 Crypto-Agility Gate. `deny` rules block:
-- Any `aws_lb_listener` with `protocol = "HTTPS"` whose `ssl_policy` doesn't contain `PQ`
-- Any `aws_kms_key` with `key_usage = "SIGN_VERIFY"` whose `customer_master_key_spec` isn't an `ML_DSA_*` spec
+## Evidence
 
-A `warn` rule flags `ML_DSA_44` (NIST security level 1) signing keys as a candidate for upgrade to `ML_DSA_65`/`ML_DSA_87` on National Security System assets. The gate fails safe: if no `data.config.enforce_cutover` override is supplied, `enforce_cutover` defaults to `true`.
+Valid states are:
 
----
+- `assessment_complete`
+- `no_assets_found`
+- `collection_failed`
+- `not_assessed`
 
-## CI/CD pipelines
+Only the first two can produce a complete evidence bundle. GitHub keeps a short-term 30-day copy. A protected job that runs only after a push to `main` creates a provenance attestation for the exact synthetic-test evidence ZIP. Seven-year retention is claimed only when that protected workflow publishes the ZIP to a separately administered S3 Object Lock bucket configured for at least 2,555 days.
 
-- **`census.yml`** — runs on every PR touching `.tf` or discovery-policy files; unit-tests the discovery policy, classifies the plan, regenerates the CBOM, and uploads both as artifacts.
-- **`pqc-compliance-gate.yml`** — runs on every PR and push to `main`; unit-tests all three policy packages, runs Trivy and Checkov IaC scans, runs the Conftest crypto-agility gate against the real plan, regenerates the CBOM, and (on push to `main`) assembles a signed, 7-year-retention evidence bundle. Uses GitHub OIDC federation for AWS credentials — no static keys are stored in the repo. **Before this runs against a real AWS account**, provision an IAM role trusted for GitHub OIDC and set its ARN as the `QUANTUMFORGE_EVIDENCE_ROLE_ARN` repository secret, then uncomment the `configure-aws-credentials` step.
-- **`cmvp-monitor.yml`** — scheduled weekly job scaffolding a check of the NIST CMVP Modules in Process list against `watchlist/cmvp-watchlist.json`. The actual diff-and-issue logic is left as a `workflow_dispatch`-testable stub (`if: false` on the issue-creation step) — wire in real diffing against a stored previous snapshot before enabling it in production.
-
----
+See [Evidence integrity and retention](docs/EVIDENCE.md).
 
 ## Validation status
 
-Everything in this repo was validated before commit:
+The current implementation was exercised with:
 
 | Check | Result |
 |---|---|
-| `terraform validate` (`modules/hybrid-pqc-kms`) | ✅ Success |
-| `terraform validate` (`modules/hybrid-pqc-alb`) | ✅ Success |
-| `terraform validate` (root module) | ✅ Success |
-| `terraform fmt -check -recursive` | ✅ Clean |
-| `opa test policies/discovery/` | ✅ 10/10 passed |
-| `opa test policies/scoring/` | ✅ 10/10 passed |
-| `opa test policies/hybrid/` | ✅ 6/6 passed |
-| `conftest test` against a classical-only mock plan | ✅ Correctly denies (2 failures) |
-| `conftest test` against a hybrid-PQC mock plan | ✅ Correctly passes |
-| GitHub Actions workflow YAML | ✅ Parses cleanly |
+| Root `terraform validate` and format check | Passed |
+| Terraform native mock tests | Root 2/2, KMS 6/6, ALB 5/5 passed without credentials |
+| OPA 1.18.2 | 42/42 tests passed |
+| Conftest | Generated hybrid plan passed; generated classical-only plan was denied with 2 failures; malformed plan was blocked |
+| Checkov 3.3.8 / Trivy 0.69.2 | Zero blocking findings; scanner images pinned by digest |
+| Live AWS KMS | `ML_DSA_65` created, KMS sign/verify passed, OpenSSL 3.5.7 verification passed, key entered `PendingDeletion` |
+| Live AWS ALB | TLS 1.3 negotiated `X25519MLKEM768`; classical fallback negotiated `X25519`; temporary-resource cleanup enforced |
+| Live AWS cleanup safety net | Targeted-run and expired-resource modes removed tagged VPC/security-group test resources; residual count was zero |
 
-`terraform plan` against a real AWS account was not exercised in this environment since no AWS credentials are attached — the modules and root plan resolve correctly up to the point of needing live AWS API access (`aws_caller_identity` / KMS/ELB API calls).
+The repository does not claim that mocks emulate cryptography. Platform behavior is claimed only where the isolated live tests exercise the real AWS API and network path.
 
----
+## Standards and references
 
-## Standards & references
-
-- NIST, [FIPS 203 — Module-Lattice-Based Key-Encapsulation Mechanism Standard](https://csrc.nist.gov/pubs/fips/203/final)
-- NIST, [FIPS 204 — Module-Lattice-Based Digital Signature Standard](https://csrc.nist.gov/pubs/fips/204/final)
-- AWS KMS Developer Guide, [ML-DSA Keys in AWS KMS](https://docs.aws.amazon.com/kms/latest/developerguide/mldsa.html)
-- AWS Documentation, [Security Policies for Your Application Load Balancer](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/describe-ssl-policies.html) — hybrid PQ-TLS policy `ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09`
-- Terraform Registry, [`aws_kms_key` resource docs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_key) — `ML_DSA_44`/`ML_DSA_65`/`ML_DSA_87` key spec support
-- NSA, [CNSA 2.0](https://media.defense.gov/2025/May/30/2003728741/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS.PDF)
-- NIST CSRC, [CMVP Modules in Process List](https://csrc.nist.gov/projects/cryptographic-module-validation-program/modules-in-process/modules-in-process-list)
-- [Open Quantum Safe project](https://github.com/open-quantum-safe) — `liboqs` / `oqs-provider`
-- [Open Policy Agent](https://github.com/open-policy-agent/opa) / [Conftest](https://github.com/open-policy-agent/conftest)
-
----
-
-## Companion documentation
-
-- [PQC Readiness Program Build Guide](docs/PQC_Readiness_Program_Build_Guide.md) — the full four-phase program design (Discovery & Inventory, Vulnerability Prioritization, Cryptographic Agility Architecture, Continuous Compliance) that this repo implements in Terraform, Rego, and CI.
-
-## Roadmap
-
-See [ROADMAP.md](ROADMAP.md) for planned work — currently focused on making the risk-scoring model impact-driven and expanding module coverage beyond AWS to Azure, GCP, on-prem, and other environments.
+- [NIST FIPS 203: ML-KEM](https://csrc.nist.gov/pubs/fips/203/final)
+- [NIST FIPS 204: ML-DSA](https://csrc.nist.gov/pubs/fips/204/final)
+- [AWS KMS ML-DSA documentation](https://docs.aws.amazon.com/kms/latest/developerguide/mldsa.html)
+- [AWS ALB security policies](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/describe-ssl-policies.html)
+- [AWS KMS pricing](https://aws.amazon.com/kms/pricing/)
+- [AWS ELB pricing](https://aws.amazon.com/elasticloadbalancing/pricing/)
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing requirements, and the PR process. Please review [SECURITY.md](SECURITY.md) before reporting any vulnerabilities, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards.
-
----
-
-*Part of the QuantumForge PQC GRC Framework. This is the implementation repo for the companion PQC Readiness Program Build Guide document.*
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). New platform claims need both deterministic contract tests and isolated live verification with cleanup and cost guardrails.

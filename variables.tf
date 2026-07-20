@@ -11,10 +11,10 @@ variable "environment" {
   default     = "sandbox"
 }
 
-variable "enable_hybrid_pqc_kms" {
+variable "enable_pqc_kms_signing" {
   description = "Whether to provision the reference ML-DSA KMS signing key."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "enable_hybrid_pqc_alb" {
@@ -24,7 +24,7 @@ variable "enable_hybrid_pqc_alb" {
 }
 
 variable "existing_load_balancer_arn" {
-  description = "ARN of an existing ALB/NLB to attach the hybrid-PQC listener to (required if enable_hybrid_pqc_alb = true)."
+  description = "ARN of an existing Application Load Balancer to attach the hybrid-PQC HTTPS listener to (required if enable_hybrid_pqc_alb = true)."
   type        = string
   default     = ""
 }

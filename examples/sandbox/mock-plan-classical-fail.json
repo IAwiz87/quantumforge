@@ -3,12 +3,12 @@
     {
       "address": "aws_kms_key.legacy_signing",
       "type": "aws_kms_key",
-      "change": {"after": {"key_usage": "SIGN_VERIFY", "customer_master_key_spec": "RSA_3072"}}
+      "change": {"actions": ["create"], "after": {"key_usage": "SIGN_VERIFY", "customer_master_key_spec": "RSA_3072"}}
     },
     {
       "address": "aws_lb_listener.legacy_https",
       "type": "aws_lb_listener",
-      "change": {"after": {"protocol": "HTTPS", "ssl_policy": "ELBSecurityPolicy-2016-08"}}
+      "change": {"actions": ["create"], "after": {"protocol": "HTTPS", "ssl_policy": "ELBSecurityPolicy-2016-08"}}
     }
   ]
 }

@@ -1,0 +1,304 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "IdentityAndReadOnlyDiscovery",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "ec2:DescribeAccountAttributes",
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeInternetGateways",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeTags",
+        "ec2:DescribeVpcAttribute",
+        "ec2:DescribeVpcs",
+        "elasticloadbalancing:DescribeListenerAttributes",
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeLoadBalancerAttributes",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeSSLPolicies",
+        "elasticloadbalancing:DescribeTags",
+        "elasticloadbalancing:DescribeTargetGroupAttributes",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "kms:ListAliases",
+        "tag:GetResources"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CreateTaggedKmsKey",
+      "Effect": "Allow",
+      "Action": [
+        "kms:CreateKey"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/project": "quantumforge",
+          "aws:RequestTag/environment": "integration-test"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "project",
+            "environment",
+            "owner",
+            "test-run",
+            "expires-at",
+            "quantumforge:algorithm-family",
+            "quantumforge:standard",
+            "quantumforge:managed-by"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ManageTaggedKmsKeys",
+      "Effect": "Allow",
+      "Action": [
+        "kms:CancelKeyDeletion",
+        "kms:DescribeKey",
+        "kms:DisableKey",
+        "kms:EnableKey",
+        "kms:GetKeyPolicy",
+        "kms:GetKeyRotationStatus",
+        "kms:GetPublicKey",
+        "kms:ListResourceTags",
+        "kms:PutKeyPolicy",
+        "kms:ScheduleKeyDeletion",
+        "kms:Sign",
+        "kms:TagResource",
+        "kms:UntagResource",
+        "kms:Verify"
+      ],
+      "Resource": "arn:aws:kms:${AWS_REGION}:${AWS_ACCOUNT_ID}:key/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/project": "quantumforge",
+          "aws:ResourceTag/environment": "integration-test"
+        }
+      }
+    },
+    {
+      "Sid": "ManageQuantumForgeKmsAliases",
+      "Effect": "Allow",
+      "Action": [
+        "kms:CreateAlias",
+        "kms:DeleteAlias"
+      ],
+      "Resource": [
+        "arn:aws:kms:${AWS_REGION}:${AWS_ACCOUNT_ID}:alias/quantumforge-live-*",
+        "arn:aws:kms:${AWS_REGION}:${AWS_ACCOUNT_ID}:key/*"
+      ]
+    },
+    {
+      "Sid": "ImportAndTagEphemeralCertificate",
+      "Effect": "Allow",
+      "Action": [
+        "acm:ImportCertificate"
+      ],
+      "Resource": "arn:aws:acm:${AWS_REGION}:${AWS_ACCOUNT_ID}:certificate/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/project": "quantumforge",
+          "aws:RequestTag/environment": "integration-test"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "project",
+            "environment",
+            "test-run",
+            "expires-at"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ReadAndDeleteTaggedEphemeralCertificate",
+      "Effect": "Allow",
+      "Action": [
+        "acm:DeleteCertificate",
+        "acm:DescribeCertificate",
+        "acm:ListTagsForCertificate"
+      ],
+      "Resource": "arn:aws:acm:${AWS_REGION}:${AWS_ACCOUNT_ID}:certificate/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/project": "quantumforge",
+          "aws:ResourceTag/environment": "integration-test"
+        }
+      }
+    },
+    {
+      "Sid": "CreateTaggedEphemeralNetworkResources",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateInternetGateway",
+        "ec2:CreateRouteTable",
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateSubnet",
+        "ec2:CreateVpc"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/project": "quantumforge",
+          "aws:RequestTag/environment": "integration-test"
+        }
+      }
+    },
+    {
+      "Sid": "ManageEphemeralNetworkTopology",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AssociateRouteTable",
+        "ec2:AttachInternetGateway",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:CreateRoute",
+        "ec2:DeleteRoute",
+        "ec2:DisassociateRouteTable",
+        "ec2:ModifyVpcAttribute",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/project": "quantumforge",
+          "ec2:ResourceTag/environment": "integration-test"
+        }
+      }
+    },
+    {
+      "Sid": "TagOnlyDuringApprovedEc2Creation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/project": "quantumforge",
+          "aws:RequestTag/environment": "integration-test",
+          "ec2:CreateAction": [
+            "CreateInternetGateway",
+            "CreateRouteTable",
+            "CreateSecurityGroup",
+            "CreateSubnet",
+            "CreateVpc"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DeleteTaggedEphemeralNetworkResources",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DeleteInternetGateway",
+        "ec2:DeleteRouteTable",
+        "ec2:DeleteSecurityGroup",
+        "ec2:DeleteSubnet",
+        "ec2:DeleteVpc",
+        "ec2:DetachInternetGateway"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/project": "quantumforge",
+          "aws:ResourceTag/environment": "integration-test"
+        }
+      }
+    },
+    {
+      "Sid": "CreateTaggedEphemeralElbv2Resources",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:CreateListener",
+        "elasticloadbalancing:CreateLoadBalancer",
+        "elasticloadbalancing:CreateTargetGroup"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/project": "quantumforge",
+          "aws:RequestTag/environment": "integration-test"
+        }
+      }
+    },
+    {
+      "Sid": "ManageTaggedEphemeralElbv2Resources",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:AddTags",
+        "elasticloadbalancing:DeleteListener",
+        "elasticloadbalancing:DeleteLoadBalancer",
+        "elasticloadbalancing:DeleteTargetGroup",
+        "elasticloadbalancing:ModifyListener",
+        "elasticloadbalancing:ModifyListenerAttributes",
+        "elasticloadbalancing:ModifyLoadBalancerAttributes",
+        "elasticloadbalancing:ModifyTargetGroup",
+        "elasticloadbalancing:ModifyTargetGroupAttributes",
+        "elasticloadbalancing:RemoveTags",
+        "elasticloadbalancing:SetSecurityGroups"
+      ],
+      "Resource": [
+        "arn:aws:elasticloadbalancing:${AWS_REGION}:${AWS_ACCOUNT_ID}:loadbalancer/app/qf-pqtls-*/*",
+        "arn:aws:elasticloadbalancing:${AWS_REGION}:${AWS_ACCOUNT_ID}:listener/app/qf-pqtls-*/*/*",
+        "arn:aws:elasticloadbalancing:${AWS_REGION}:${AWS_ACCOUNT_ID}:targetgroup/qf-pqtls-*/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "elasticloadbalancing:ResourceTag/project": "quantumforge",
+          "elasticloadbalancing:ResourceTag/environment": "integration-test"
+        }
+      }
+    },
+    {
+      "Sid": "VerifyEvidenceBucketObjectLock",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketObjectLockConfiguration"
+      ],
+      "Resource": "arn:aws:s3:::${EVIDENCE_BUCKET}"
+    },
+    {
+      "Sid": "PublishImmutableEvidencePrefix",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectRetention",
+        "s3:GetObjectVersion",
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::${EVIDENCE_BUCKET}/quantumforge/*"
+    },
+    {
+      "Sid": "RequireSevenYearComplianceRetention",
+      "Effect": "Allow",
+      "Action": "s3:PutObjectRetention",
+      "Resource": "arn:aws:s3:::${EVIDENCE_BUCKET}/quantumforge/*",
+      "Condition": {
+        "StringEquals": {
+          "s3:object-lock-mode": "COMPLIANCE"
+        },
+        "NumericGreaterThanEquals": {
+          "s3:object-lock-remaining-retention-days": 2555
+        }
+      }
+    },
+    {
+      "Sid": "DenyObjectLockAdministrationAndDeletion",
+      "Effect": "Deny",
+      "Action": [
+        "s3:BypassGovernanceRetention",
+        "s3:DeleteBucket",
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:PutBucketObjectLockConfiguration",
+        "s3:PutBucketPolicy"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
