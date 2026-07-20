@@ -2,13 +2,13 @@
 
 # QuantumForge
 
-QuantumForge is a policy-as-code post-quantum cryptography readiness framework. It combines Terraform reference modules, Rego policies, credential-free tests, isolated AWS runtime tests, and evidence controls.
+QuantumForge is a policy-as-code post-quantum cryptography (PQC) readiness framework. It combines Terraform reference modules, Rego policies, credential-free tests, isolated AWS runtime tests, and evidence controls.
 
 It intentionally distinguishes:
 
-- **pure post-quantum signing:** AWS KMS ML-DSA, standardized by NIST FIPS 204
-- **hybrid key establishment:** AWS ELB policies that negotiate classical plus ML-KEM groups while retaining classical client compatibility
-- **measurement from remediation:** the vendor-neutral inventory is the system of record; cloud modules are adapters and reference implementations
+- **pure post-quantum signing:** AWS Key Management Service (KMS) ML-DSA, standardized by NIST FIPS 204
+- **hybrid key establishment:** AWS Elastic Load Balancing (ELB) policies that negotiate classical plus ML-KEM groups while retaining classical client compatibility
+- **measurement from remediation:** the vendor-neutral inventory is the system of record; cloud modules are integrations and reference implementations, not the inventory definition
 
 ## What is implemented
 
@@ -19,7 +19,7 @@ It intentionally distinguishes:
 | Governance | Owned, approved, expiring exceptions that fail closed when invalid |
 | KMS | Pure `ML_DSA_44`, `ML_DSA_65`, or `ML_DSA_87` signing key module |
 | TLS | Application Load Balancer HTTPS listener with an exact allowlist of recommended AWS hybrid PQ-TLS policies |
-| Offline tests | Terraform native mock-provider tests, OPA tests, Conftest regression fixtures, schema validation, IaC scans, and CBOM generation |
+| Offline tests | Terraform native mock-provider tests, Open Policy Agent (OPA) tests, Conftest policy tests, schema validation, infrastructure-as-code (IaC) scans, and Cryptographic Bill of Materials (CBOM) generation |
 | Live tests | AWS KMS sign/verify plus independent OpenSSL verification; ALB `X25519MLKEM768` and classical `X25519` runtime handshakes |
 | Evidence | Explicit assessment states, SHA-256 manifests, GitHub artifact attestations, and optional seven-year S3 Object Lock publishing |
 
@@ -34,13 +34,23 @@ policies/
   inventory/                Vendor-neutral inventory checks and metrics
   scoring/                  Risk, urgency, effort, and confidence
   governance/               Exception validation
-  hybrid/                   Conftest deployment gate
+  hybrid/                   Deployment rules executed by Conftest
 schemas/                    Versioned inventory schema
-examples/                   Plan, inventory, and governance fixtures
-tests/live/                 Isolated AWS KMS and ALB Terraform fixtures
+examples/                   Generated plan, inventory, and governance test inputs
+tests/live/                 Temporary AWS KMS and ALB test resources
 scripts/aws/                Guarded runtime lifecycle tests
-.github/workflows/          Credential-free PR CI and manual OIDC live tests
+.github/workflows/          Credential-free PR CI and manual OpenID Connect (OIDC) live tests
 ```
+
+## Terms used in this repository
+
+- **Test fixture:** generated test input or temporary cloud resource created only for validation.
+- **Fail closed:** missing, malformed, or contradictory data stops the assessment instead of being treated as compliant or empty.
+- **Inventory collection:** conversion of a Terraform plan into the canonical cryptographic inventory. Some script and directory names retain the earlier term `census`.
+- **Evidence profile:** the required set of files for one validation mode: offline policy checks, live KMS signing, or live ALB TLS negotiation.
+- **Provenance attestation:** a signed statement linking an evidence bundle to the GitHub workflow and commit that created it.
+- **Protected GitHub environment:** branch, approval, and variable restrictions applied before a sensitive workflow job can run.
+- **Cleanup safety net:** the hourly workflow that removes expired tagged AWS test resources if normal test cleanup cannot run. Its filename and protected environment retain the legacy internal name `janitor`.
 
 ## Prerequisites
 
@@ -98,15 +108,15 @@ The default policy is `ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09`. Overrides mu
 
 ## Inventory and policy
 
-Terraform discovery currently covers KMS, ELB listeners, ACM certificates, ACM Private CA, CloudFront, API Gateway custom domains, and Site-to-Site VPN connections. Provider-managed or incomplete algorithm data stays `unknown`.
+Terraform discovery currently covers KMS, ELB listeners, AWS Certificate Manager (ACM) certificates, ACM Private Certificate Authority, CloudFront, API Gateway custom domains, and Site-to-Site VPN connections. Provider-managed or incomplete algorithm data stays `unknown`.
 
 The canonical cross-platform model is [`schemas/crypto-inventory.schema.json`](schemas/crypto-inventory.schema.json). See [Inventory](docs/INVENTORY.md), [Governance](docs/GOVERNANCE.md), and the [Roadmap](ROADMAP.md).
 
 ## CI and live AWS validation
 
-`pqc-compliance-gate.yml` is credential-free and safe for pull requests. It fails on Terraform, OPA, Conftest, schema, Checkov, Trivy, CBOM, or evidence-generation errors. Its normalized inventory has `assessment_scope: synthetic_fixture`: it proves framework behavior and never represents an AWS environment assessment.
+`pqc-compliance-gate.yml` is credential-free and safe for pull requests. It fails on Terraform, OPA, Conftest, schema, Checkov, Trivy, CBOM, or evidence-generation errors. Its normalized inventory uses `assessment_scope: synthetic_fixture`, meaning it was generated from test data. It proves framework behavior and never represents an AWS environment assessment.
 
-`aws-live-pqc-validation.yml` is manually triggered in a protected GitHub environment and authenticates through OIDC. It requires a dedicated sandbox account, an account-ID guard, a concurrency lock, timeouts, tagged resources, in-process cleanup, a post-job tag-based cleanup check, and an hourly expired-fixture janitor. The ALB job is optional because it creates a paid resource.
+`aws-live-pqc-validation.yml` is manually triggered in a protected GitHub environment and authenticates through OIDC. It requires a dedicated sandbox account, an account-ID guard, a concurrency lock, timeouts, tagged resources, in-process cleanup, a post-job cleanup check, and the hourly cleanup safety net for expired test resources. The ALB job is optional because it creates a paid resource.
 
 See [Live AWS validation](docs/AWS_LIVE_TESTS.md).
 
@@ -119,7 +129,7 @@ Valid states are:
 - `collection_failed`
 - `not_assessed`
 
-Only the first two can produce a complete evidence bundle. GitHub keeps a short-term 30-day copy; a separate trusted `main` job attests the exact framework-validation ZIP. Seven-year retention is claimed only when the protected workflow publishes that ZIP to a separately administered S3 Object Lock bucket configured for at least 2,555 days.
+Only the first two can produce a complete evidence bundle. GitHub keeps a short-term 30-day copy. A protected job that runs only after a push to `main` creates a provenance attestation for the exact synthetic-test evidence ZIP. Seven-year retention is claimed only when that protected workflow publishes the ZIP to a separately administered S3 Object Lock bucket configured for at least 2,555 days.
 
 See [Evidence integrity and retention](docs/EVIDENCE.md).
 
@@ -132,11 +142,11 @@ The current implementation was exercised with:
 | Root `terraform validate` and format check | Passed |
 | Terraform native mock tests | Root 2/2, KMS 6/6, ALB 5/5 passed without credentials |
 | OPA 1.18.2 | 42/42 tests passed |
-| Conftest | Hybrid fixture passed; classical fixture was denied with 2 failures; malformed plan failed closed |
+| Conftest | Generated hybrid plan passed; generated classical-only plan was denied with 2 failures; malformed plan was blocked |
 | Checkov 3.3.8 / Trivy 0.69.2 | Zero blocking findings; scanner images pinned by digest |
 | Live AWS KMS | `ML_DSA_65` created, KMS sign/verify passed, OpenSSL 3.5.7 verification passed, key entered `PendingDeletion` |
-| Live AWS ALB | TLS 1.3 negotiated `X25519MLKEM768`; classical fallback negotiated `X25519`; fixture cleanup enforced |
-| Live AWS janitor | Targeted and expiry modes removed tagged VPC/security-group smoke fixtures; residual count was zero |
+| Live AWS ALB | TLS 1.3 negotiated `X25519MLKEM768`; classical fallback negotiated `X25519`; temporary-resource cleanup enforced |
+| Live AWS cleanup safety net | Targeted-run and expired-resource modes removed tagged VPC/security-group test resources; residual count was zero |
 
 The repository does not claim that mocks emulate cryptography. Platform behavior is claimed only where the isolated live tests exercise the real AWS API and network path.
 

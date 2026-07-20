@@ -1,4 +1,4 @@
-name: aws-live-pqc-validation
+name: Live AWS ML-DSA and hybrid TLS validation
 
 on:
   workflow_dispatch:
@@ -171,7 +171,7 @@ jobs:
           retention-days: 30
 
   cleanup-live-resources:
-    name: Verify tag-based cleanup
+    name: Remove or verify tagged AWS test resources
     if: ${{ always() && github.ref == 'refs/heads/main' }}
     needs: [kms-lifecycle, alb-pqtls-runtime]
     runs-on: ubuntu-latest

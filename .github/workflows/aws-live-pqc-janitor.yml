@@ -1,4 +1,4 @@
-name: aws-live-pqc-janitor
+name: Remove expired AWS integration-test resources
 
 on:
   schedule:
@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  remove-expired-fixtures:
-    name: Remove expired tagged AWS fixtures
+  remove-expired-test-resources:
+    name: Remove expired tagged AWS test resources
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -35,7 +35,7 @@ jobs:
           role-to-assume: ${{ vars.QUANTUMFORGE_AWS_ROLE_ARN }}
           aws-region: us-east-1
           mask-aws-account-id: true
-          role-session-name: quantumforge-janitor-${{ github.run_id }}
+          role-session-name: quantumforge-expired-resource-cleanup-${{ github.run_id }}
 
       - name: Remove expired tagged resources
         env:

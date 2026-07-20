@@ -4,7 +4,7 @@
 
 `policies/scoring/risk_score.rego` keeps four decision dimensions separate:
 
-- `inherent_risk_score` (0–100): harvest-now-decrypt-later exposure, data classification, and business impact
+- `inherent_risk_score` (0–100): exposure to data stolen now and decrypted after future quantum advances, data classification, and business impact
 - `migration_urgency_score` (0–100): inherent risk plus a deadline-pressure weight
 - `remediation_effort`: `low`, `medium`, or `high`; it never reduces risk
 - `evidence_confidence`: `1.0`, `0.7`, or `0.4`; it is reported independently rather than multiplying risk downward
@@ -24,9 +24,9 @@ See [`examples/inventory/scoring-ready-inventory.json`](../examples/inventory/sc
 - creation no later than the assessment timestamp
 - expiration later than both creation and the assessment timestamp
 
-Duplicate exception IDs fail closed. The deployment gate evaluates expiry with OPA's runtime clock and ignores any `assessment_time` supplied in policy data, so a checked-in timestamp cannot freeze an exception. Standalone historical governance assessments may still supply `input.assessment_time` for reproducible evidence.
+Duplicate exception IDs block the assessment. The deployment gate evaluates expiry using the current time when Open Policy Agent runs and ignores any `assessment_time` supplied in checked-in policy data, so a stored timestamp cannot keep an exception valid indefinitely. Standalone historical governance assessments may still supply `input.assessment_time` when they need to reproduce an earlier decision.
 
-The Conftest gate accepts exceptions only from `data.quantumforge_config`. Invalid or expired entries fail closed. See `examples/governance/exceptions.json`.
+The Conftest gate reads exceptions only from the Rego data document `data.quantumforge_config`. Invalid or expired entries block deployment. See `examples/governance/exceptions.json`.
 
 ```bash
 conftest test plan.json \

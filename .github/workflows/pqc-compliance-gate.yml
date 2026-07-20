@@ -1,4 +1,4 @@
-name: pqc-compliance-gate
+name: PQC configuration, policy, and evidence checks
 
 on:
   pull_request:
@@ -86,7 +86,7 @@ jobs:
           test "$rc" -ne 0
           jq -e '[.[].failures[]?] | length >= 2' build/classical-denial.json >/dev/null
 
-      - name: Generate a fail-closed crypto census from a fixture
+      - name: Generate crypto inventory from a synthetic Terraform plan
         env:
           QUANTUMFORGE_ASSESSMENT_SCOPE: synthetic_fixture
         run: |
@@ -234,7 +234,7 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_WORKFLOW: ${{ github.workflow }}
           GITHUB_RUN_ID: ${{ github.run_id }}
-        run: ./scripts/build-evidence.py build/evidence build/quantumforge-framework-validation.zip
+        run: ./scripts/build-evidence.py build/evidence build/quantumforge-synthetic-test-evidence.zip
 
       - name: Reject incomplete or failed evidence bundles
         run: |
@@ -289,10 +289,10 @@ jobs:
       - name: Upload short-lived CI evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: quantumforge-framework-validation
+          name: quantumforge-synthetic-test-evidence
           path: |
-            build/quantumforge-framework-validation.zip
-            build/quantumforge-framework-validation.zip.sha256
+            build/quantumforge-synthetic-test-evidence.zip
+            build/quantumforge-synthetic-test-evidence.zip.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -311,18 +311,18 @@ jobs:
       - name: Download validated evidence
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
-          name: quantumforge-framework-validation
+          name: quantumforge-synthetic-test-evidence
           path: build
 
       - name: Verify evidence checksum
         run: |
           cd build
-          sha256sum -c quantumforge-framework-validation.zip.sha256
+          sha256sum -c quantumforge-synthetic-test-evidence.zip.sha256
 
       - name: Attest complete evidence bundle
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
-          subject-path: build/quantumforge-framework-validation.zip
+          subject-path: build/quantumforge-synthetic-test-evidence.zip
 
   publish-offline-evidence:
     name: Publish trusted evidence to immutable storage
@@ -344,13 +344,13 @@ jobs:
       - name: Download validated evidence
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
-          name: quantumforge-framework-validation
+          name: quantumforge-synthetic-test-evidence
           path: build
 
       - name: Verify evidence checksum
         run: |
           cd build
-          sha256sum -c quantumforge-framework-validation.zip.sha256
+          sha256sum -c quantumforge-synthetic-test-evidence.zip.sha256
 
       - name: Configure scoped AWS credentials
         uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6.0.0
@@ -371,5 +371,5 @@ jobs:
           AWS_REGION: us-east-1
         run: |
           ./scripts/publish-evidence-s3.sh \
-            build/quantumforge-framework-validation.zip \
+            build/quantumforge-synthetic-test-evidence.zip \
             "${{ vars.QUANTUMFORGE_EVIDENCE_BUCKET }}"

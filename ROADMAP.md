@@ -8,7 +8,7 @@ QuantumForge expands measurement before remediation surface. New cloud deploymen
 - [x] Correct FIPS 204 ML-DSA terminology and pure-PQC KMS module naming
 - [x] ALB-only listener contract with exact recommended PQ-TLS policy allowlist
 - [x] Credential-free Terraform native mock tests
-- [x] Fail-closed census and compliance CI
+- [x] Fail-closed Terraform-plan inventory collection and compliance CI
 - [x] Real AWS ML-DSA KMS sign/verify lifecycle harness
 - [x] Real ALB hybrid PQ-TLS plus classical-fallback runtime harness
 - [x] Separate inherent risk, migration urgency, remediation effort, and evidence confidence
@@ -18,10 +18,10 @@ QuantumForge expands measurement before remediation surface. New cloud deploymen
 
 ## Priority 1: discovery coverage
 
-Expand collectors and adapters into the canonical inventory schema:
+Expand source-specific collectors and converters into the canonical inventory schema:
 
 1. cloud API collectors for keys, certificates, CAs, TLS policies, VPN/IPsec, and ownership tags
-2. CBOM and application dependency ingestion
+2. Cryptographic Bill of Materials (CBOM) and application dependency ingestion
 3. active and passive protocol observations
 4. certificate expiry, signature, key-size, and chain metadata
 5. data-flow, environment, business impact, and secrecy-lifetime enrichment
@@ -36,7 +36,7 @@ Unknown or incomplete evidence must remain visible. A failed collector cannot be
 - require independent approval and immutable history for exceptions
 - add policy/version metadata to every decision
 - add dashboards for inventory coverage, stale observations, unknown algorithms, and expiring exceptions
-- add automated CMVP watchlist comparison after a stable machine-readable source and baseline snapshot exist
+- add automated NIST Cryptographic Module Validation Program (CMVP) watchlist comparison after a stable machine-readable source and baseline snapshot exist
 
 ## Priority 3: platform remediation modules
 

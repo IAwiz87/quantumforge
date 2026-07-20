@@ -48,8 +48,8 @@ clearly in the advisory description.
 
 - Terraform modules in `modules/` (`pqc-kms-signing`, `hybrid-pqc-alb`) and the root module — misconfigurations that could provision weaker-than-intended cryptography, overly permissive IAM, or insecure defaults
 - Rego policies in `policies/` (`discovery`, `scoring`, `hybrid`, `governance`, `inventory`) — logic errors that would allow a `deny` rule to be bypassed, misclassify an asset, accept an expired exception, or under-score real risk
-- GitHub Actions workflows in `.github/workflows/` — supply-chain issues (e.g. unpinned actions, script injection via untrusted PR input), secret handling, or OIDC role-assumption misconfigurations
-- The Conftest compliance gate and its mock-plan fixtures in `examples/sandbox/`
+- GitHub Actions workflows in `.github/workflows/` — supply-chain issues (e.g. unpinned actions, script injection via untrusted PR input), secret handling, or OpenID Connect (OIDC) role-assumption misconfigurations
+- The Conftest compliance gate and its generated test plans in `examples/sandbox/`
 
 **Out of scope:**
 
@@ -70,10 +70,10 @@ This project follows coordinated disclosure:
 
 For context when evaluating reports, some intentional design decisions:
 
-- **No AWS credentials in pull requests.** The PR compliance workflow has only `contents: read` and does not receive OIDC authority. The separate live workflow is manual, restricted to `main`, protected by the `quantumforge-aws-sandbox` environment, and uses job-scoped GitHub OIDC rather than long-lived access keys. A second exact-subject, main-only janitor environment supports tag-based post-job and scheduled cleanup without granting PR authority.
+- **No AWS credentials in pull requests.** The PR compliance workflow has only `contents: read` and does not receive OIDC authority. The separate live workflow is manual, restricted to `main`, protected by the `quantumforge-aws-sandbox` environment, and uses job-scoped GitHub OIDC rather than long-lived access keys. A second main-only environment, named `quantumforge-aws-sandbox-janitor`, runs the post-job and hourly expired-resource cleanup safety net without granting PR authority.
 - **Fail-safe policy default.** `policies/hybrid/combiner.rego` defaults `enforce_cutover` to `true`, meaning ambiguous or missing configuration blocks non-compliant crypto by default rather than allowing it through.
 - **Asymmetric KMS keys cannot auto-rotate.** `pqc-kms-signing` intentionally sets `enable_key_rotation = false` because AWS KMS does not support automatic rotation for `SIGN_VERIFY` asymmetric keys — this is a platform constraint, not an oversight, and rotation must be handled operationally (re-key + policy cutover).
-- **Mock plan fixtures are synthetic.** Everything under `examples/sandbox/` uses fictitious ARNs and account IDs for policy unit testing — they do not correspond to any real AWS account or resource.
+- **Mock plans are generated test data.** Everything under `examples/sandbox/` uses fictitious ARNs and account IDs for policy unit testing. They do not correspond to any real AWS account or resource.
 
 ## Using This Repo Securely
 

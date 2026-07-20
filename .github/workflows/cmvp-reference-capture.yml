@@ -1,4 +1,4 @@
-name: cmvp-reference-capture
+name: Capture NIST cryptographic-module validation reference
 
 on:
   schedule:
@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   validate-reference:
+    name: Validate and archive the NIST Modules in Process reference
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -35,7 +36,7 @@ jobs:
       - name: Upload reference evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: cmvp-reference
+          name: nist-cmvp-reference-document
           path: reports/
           if-no-files-found: error
           retention-days: 30

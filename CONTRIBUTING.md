@@ -25,8 +25,8 @@ Please do **not** open a public issue for a security vulnerability — see [SECU
 You'll need:
 
 - [Terraform](https://developer.hashicorp.com/terraform/downloads) (CI uses 1.15.8; `versions.tf` declares the supported range)
-- [OPA](https://www.openpolicyagent.org/docs/latest/#running-opa) for Rego unit tests
-- [Conftest](https://www.conftest.dev/install/) for the compliance-gate tests against mock Terraform plans
+- [Open Policy Agent (OPA)](https://www.openpolicyagent.org/docs/latest/#running-opa) for Rego policy unit tests
+- [Conftest](https://www.conftest.dev/install/) for running those policies against generated Terraform test plans
 - Optionally, a dedicated AWS sandbox for the explicitly authorized live lifecycle scripts. Pull-request and module development never require AWS credentials.
 
 ```bash
@@ -55,9 +55,9 @@ quantumforge/
 │   ├── scoring/            # package quantumforge.scoring — HNDL risk scoring
 │   ├── governance/         # owned, approved, expiring exceptions
 │   ├── inventory/          # vendor-neutral inventory validation
-│   └── hybrid/             # package main — Conftest compliance gate
-├── examples/sandbox/       # mock Terraform plan JSON fixtures for policy testing
-├── .github/workflows/      # credential-free gate, manual live tests, CMVP reference capture
+│   └── hybrid/             # deployment compliance rules executed by Conftest
+├── examples/sandbox/       # generated Terraform plan JSON used for policy testing
+├── .github/workflows/      # credential-free gate, manual live tests, NIST cryptographic-module reference capture
 └── docs/                   # companion Build Guide + banner
 ```
 
@@ -84,7 +84,7 @@ quantumforge/
 ### GitHub Actions Workflows
 
 - Validate YAML syntax before committing (e.g. `python -c "import yaml; yaml.safe_load(open('.github/workflows/<file>.yml'))"`).
-- Do not add steps that require static AWS credentials — this project uses OIDC federation exclusively (see `SECURITY.md`).
+- Do not add steps that require static AWS credentials. Live workflows use GitHub OpenID Connect (OIDC) federation exclusively (see `SECURITY.md`).
 - Pin every third-party action to an immutable commit SHA and retain the release tag in a comment.
 
 ## Testing Checklist
