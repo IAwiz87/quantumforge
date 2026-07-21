@@ -150,12 +150,43 @@ has_deadline_input(asset) if {
 	object.get(asset, "regulatory_category", null) in regulatory_category_values
 } else := false
 
+# Optional enrichment must be validated whenever present. Otherwise an
+# unsupported category can hide behind an explicit numeric deadline, and a
+# fractional fan-in count can be reported as though it satisfied the schema.
+valid_optional_regulatory_category(asset) if {
+	object.get(asset, "regulatory_category", null) == null
+} else if {
+	object.get(asset, "regulatory_category", null) in regulatory_category_values
+} else := false
+
+valid_optional_dependent_asset_count(asset) if {
+	object.get(asset, "dependent_asset_count", null) == null
+} else if {
+	count := object.get(asset, "dependent_asset_count", null)
+	is_number(count)
+	count >= 0
+	count == floor(count)
+} else := false
+
+# An asset can be scored by itself without an inventory envelope. During an
+# inventory assessment, however, every asset_id must be unique before queue
+# construction: migration_work_queue later keys its ordering by asset_id.
+duplicate_asset_id(asset) if {
+	asset_id := object.get(asset, "asset_id", null)
+	count([candidate |
+		some candidate in input.assets
+		object.get(candidate, "asset_id", null) == asset_id
+	]) > 1
+}
+
 metadata_checks(asset) := {
 	"asset_id must be a non-empty string": valid_nonempty_string(object.get(asset, "asset_id", null)),
 	"secrecy_lifetime_years must be a non-negative number": valid_nonnegative_number(object.get(asset, "secrecy_lifetime_years", null)),
 	"data_classification is missing or unsupported": object.get(asset, "data_classification", null) in classification_values,
 	"impact is missing or unsupported": object.get(asset, "impact", null) in impact_values,
 	"migration_deadline_months must be a number, or regulatory_category must be set": has_deadline_input(asset),
+	"regulatory_category is set but unsupported": valid_optional_regulatory_category(asset),
+	"dependent_asset_count must be a non-negative integer when set": valid_optional_dependent_asset_count(asset),
 	"remediation_effort is missing or unsupported": object.get(asset, "remediation_effort", null) in effort_values,
 	"evidence_confidence is missing or unsupported": object.get(asset, "evidence_confidence", null) in confidence_values,
 }
@@ -166,6 +197,14 @@ metadata_errors(asset) := {message |
 }
 
 is_valid(asset) if count(metadata_errors(asset)) == 0
+
+# This is intentionally separate from is_valid: standalone scoring has no
+# inventory to compare against, while collection assessment must reject
+# ambiguous identities before it builds queue entries keyed by asset_id.
+is_valid_inventory_asset(asset) if {
+	is_valid(asset)
+	not duplicate_asset_id(asset)
+}
 
 inherent_risk_score(asset) := total if {
 	is_valid(asset)
@@ -278,7 +317,7 @@ display_deadline_months(asset) := round(effective_deadline_months(asset) * 10) /
 
 scored_inventory contains entry if {
 	some asset in input.assets
-	is_valid(asset)
+	is_valid_inventory_asset(asset)
 	entry := {
 		"asset_id": asset.asset_id,
 		"inherent_risk_score": inherent_risk_score(asset),
@@ -299,6 +338,15 @@ invalid_inventory contains entry if {
 	entry := {
 		"asset_id": object.get(asset, "asset_id", "unknown"),
 		"errors": sort(errors),
+	}
+}
+
+invalid_inventory contains entry if {
+	some asset in input.assets
+	duplicate_asset_id(asset)
+	entry := {
+		"asset_id": object.get(asset, "asset_id", "unknown"),
+		"errors": ["asset_id must be unique within the inventory"],
 	}
 }
 
@@ -338,13 +386,13 @@ work_queue_sort_key(asset) := [
 
 work_queue_keys := [work_queue_sort_key(asset) |
 	some asset in input.assets
-	is_valid(asset)
+	is_valid_inventory_asset(asset)
 ]
 
 work_queue_entry(asset_id) := entry if {
 	some asset in input.assets
 	asset.asset_id == asset_id
-	is_valid(asset)
+	is_valid_inventory_asset(asset)
 	entry := {
 		"asset_id": asset.asset_id,
 		"inherent_risk_score": inherent_risk_score(asset),
