@@ -46,7 +46,7 @@ check-jsonschema \
 
 The collector emits the standard `{schema_version, assets}` document, normalizes KMS `SIGN_VERIFY` to `signing`, carries Terraform tags into metadata, and records one observation timestamp for the full collection. Missing owner or environment tags remain explicit as `unassigned` or `unknown`; downstream enrichment should resolve them rather than silently dropping the assets.
 
-Risk enrichment remains inside the same schema through optional `secrecy_lifetime_years`, `data_classification`, `impact`, `migration_deadline_months`, and `remediation_effort` fields. `examples/inventory/scoring-ready-inventory.json` demonstrates an asset that can be validated and scored without discarding information during conversion.
+Risk enrichment remains inside the same schema through optional `secrecy_lifetime_years`, `data_classification`, `impact`, `migration_deadline_months` (or the calendar-anchored `regulatory_category` alternative), `remediation_effort`, and `dependent_asset_count` fields. `examples/inventory/scoring-ready-inventory.json` and `examples/inventory/calendar-anchored-inventory.json` demonstrate assets that can be validated and scored without discarding information during conversion. See [docs/GOVERNANCE.md](GOVERNANCE.md) and [docs/SCORING_METHODOLOGY.md](SCORING_METHODOLOGY.md) for what each field feeds into.
 
 ## Next inventory data sources
 

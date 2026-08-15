@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0.0",
+  "assets": [
+    {
+      "asset_id": "aws_kms_key.ca-anchored",
+      "provider": "aws",
+      "resource_type": "aws_kms_key",
+      "crypto_function": "signing",
+      "algorithm": "RSA_2048",
+      "classification": "classical_only",
+      "owner": "security-engineering",
+      "environment": "production",
+      "source": "terraform_plan",
+      "observed_at": "2026-07-20T00:00:00Z",
+      "evidence_confidence": "high",
+      "secrecy_lifetime_years": 10,
+      "data_classification": "nss",
+      "impact": "mission_critical",
+      "regulatory_category": "software_firmware_signing",
+      "dependent_asset_count": 40,
+      "remediation_effort": "high"
+    },
+    {
+      "asset_id": "aws_acm_certificate.overdue",
+      "provider": "aws",
+      "resource_type": "aws_acm_certificate",
+      "crypto_function": "certificate",
+      "algorithm": "RSA_2048",
+      "classification": "classical_only",
+      "owner": "security-engineering",
+      "environment": "production",
+      "source": "terraform_plan",
+      "observed_at": "2026-07-20T00:00:00Z",
+      "evidence_confidence": "medium",
+      "secrecy_lifetime_years": 3,
+      "data_classification": "regulated",
+      "impact": "business_critical",
+      "migration_deadline_months": -2,
+      "remediation_effort": "medium"
+    }
+  ]
+}
