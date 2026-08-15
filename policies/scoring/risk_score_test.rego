@@ -170,6 +170,19 @@ test_missing_both_deadline_inputs_is_invalid if {
 	not is_valid(asset)
 }
 
+test_malformed_optional_enrichment_is_invalid if {
+	asset := object.union(base_asset, {
+		# The numeric deadline makes the category unnecessary for scoring, but
+		# an explicitly supplied optional field must still satisfy the schema.
+		"regulatory_category": "not_a_cnsa_category",
+		"dependent_asset_count": 1.5,
+	})
+	errors := metadata_errors(asset)
+	"regulatory_category is set but unsupported" in errors
+	"dependent_asset_count must be a non-negative integer when set" in errors
+	not is_valid(asset)
+}
+
 # --- Gap #4: classification/impact divergence (reported only) --------------
 
 test_aligned_classification_and_impact_is_not_flagged if {
@@ -219,6 +232,22 @@ test_work_queue_uses_effort_only_as_tiebreaker if {
 	# because its remediation effort is also low.
 	queue[3].asset_id == "queue.lower-risk-low-effort"
 	queue[3].inherent_risk_score < queue[2].inherent_risk_score
+}
+
+test_duplicate_asset_ids_are_invalid_and_do_not_break_the_queue if {
+	duplicate := object.union(base_asset, {
+		"secrecy_lifetime_years": 2,
+		"data_classification": "public",
+		"impact": "informational",
+		"migration_deadline_months": 60,
+		"remediation_effort": "low",
+	})
+	result := assessment with input as {"assets": [base_asset, duplicate]}
+	result.valid_asset_count == 0
+	count(result.invalid_inventory) == 1
+	count(result.migration_work_queue) == 0
+	some invalid in result.invalid_inventory
+	"asset_id must be unique within the inventory" in invalid.errors
 }
 
 # --- Gap #7: dependency-informed impact hint (advisory only) ---------------

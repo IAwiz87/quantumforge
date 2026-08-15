@@ -141,6 +141,7 @@ jobs:
             --schemafile schemas/crypto-inventory.schema.json \
             examples/inventory/mixed-platform-inventory.json \
             examples/inventory/scoring-ready-inventory.json \
+            examples/inventory/calendar-anchored-inventory.json \
             build/evidence/iac-inventory.json
 
       - name: Exercise schema-compatible risk enrichment and scoring
