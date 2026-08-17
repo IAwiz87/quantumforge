@@ -1,4 +1,6 @@
-![QuantumForge banner](docs/banner.png)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/IAwiz87/quantumforge/main/docs/banner.png" alt="QuantumForge banner" width="100%">
+</p>
 
 # QuantumForge
 
